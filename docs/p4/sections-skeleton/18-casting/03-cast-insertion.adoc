@@ -7,22 +7,29 @@ explicit. This process is called _cast insertion_. A cast may be inserted
 such that an expression matches the expected type, and it may also be
 inserted to ensure that two expressions have the same type.
 
+// Added
+Since a cast may take several steps, as described in Section <<sec-cast-chain>>,
+one cast is inserted per step of the chain.
+
+${func-latex: apply_cast}
+${func-prose: apply_cast}
+
 ==== Casts to match expected type
 
 The below function inserts casts to match expected types.
 
-${func-title-source: cast_unary}
+${func-title-latex: cast_unary}
 ${func-title-prose: cast_unary}
 
-${func-source: cast_unary}
+${func-latex: cast_unary}
 ${func-prose: cast_unary}
 
 ==== Casts to ensure type equality
 
 The below function inserts casts to ensure that two expressions have the same type.
 
-${func-title-source: cast_binary}
+${func-title-latex: cast_binary}
 ${func-title-prose: cast_binary}
 
-${func-source: cast_binary}
+${func-latex: cast_binary}
 ${func-prose: cast_binary}
