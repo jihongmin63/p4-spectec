@@ -20,6 +20,79 @@ let unsupported (at : region) (construct : string) : 'a =
        (Diagnostic.error ~source:"lean" at
           ("Lean skeleton does not support " ^ construct)))
 
+type condition_result = { condition : L.prop; evaluation : terms_result }
+
+let rec translate_condition (env : env) (type_parameters : string list)
+    (functions : (string * L.type_ref) list) (next : int) (exp : S.exp) : condition_result =
+  let recurse : int -> S.exp -> condition_result = translate_condition env type_parameters functions in
+  match exp.it with
+  | UnE (`NotOp, _, value) ->
+      let result : condition_result = recurse next value in
+      { result with condition = L.Not result.condition }
+  | BinE ((`AndOp | `OrOp | `ImplOp | `EquivOp as operator), _, left, right) ->
+      let left : condition_result = recurse next left in
+      let right : condition_result = recurse left.evaluation.next right in
+      let condition : L.prop = match operator with
+        | `AndOp -> L.And (left.condition, right.condition)
+        | `OrOp -> L.Or (left.condition, right.condition)
+        | `ImplOp -> L.Implies (left.condition, right.condition)
+        | `EquivOp -> L.Iff (left.condition, right.condition)
+      in
+      { condition; evaluation = {
+          terms = []; premises = left.evaluation.premises @ right.evaluation.premises;
+          binders = left.evaluation.binders @ right.evaluation.binders;
+          next = right.evaluation.next;
+          helpers = left.evaluation.helpers @ right.evaluation.helpers } }
+  | CmpE (operator, _, left, right) ->
+      if expression_type env type_parameters left <> expression_type env type_parameters right then
+        unsupported exp.at "comparison operands with different runtime types";
+      let evaluation : terms_result = collect_terms (translate_term env type_parameters functions) next [ left; right ] in
+      let operator : L.comparison = match operator with
+        | `EqOp -> L.Eq | `NeOp -> L.Ne | `LtOp -> L.Lt | `LeOp -> L.Le | `GtOp -> L.Gt | `GeOp -> L.Ge
+      in
+      let condition : L.prop = match evaluation.terms with
+        | [ left; right ] -> L.Comparison (operator, left, right)
+        | _ -> assert false
+      in
+      { condition; evaluation }
+  | MemE (element, collection) ->
+      (match expression_type env type_parameters collection with
+      | BuiltinType ("List", [ typ ]) when typ = expression_type env type_parameters element -> ()
+      | _ -> unsupported exp.at "membership in a non-list");
+      let evaluation : terms_result = collect_terms (translate_term env type_parameters functions) next [ element; collection ] in
+      let condition : L.prop = match evaluation.terms with
+        | [ element; collection ] -> L.Membership (element, collection)
+        | _ -> assert false
+      in
+      { condition; evaluation }
+  | _ ->
+      let result : term_result = translate_term env type_parameters functions next exp in
+      { condition = L.IsTrue result.term;
+        evaluation = { terms = []; premises = result.premises; binders = result.binders; next = result.next; helpers = result.helpers } }
+
+let rec translate_premise (env : env) (type_parameters : string list)
+    (functions : (string * L.type_ref) list) (next : int) (premise : S.prem) : terms_result =
+  match premise.it with
+  | RulePr (id, notation, _) | IfHoldPr (id, notation) ->
+      let (application, result) : L.application * terms_result =
+        translate_application env type_parameters functions next id.it [] (Mixfix.args notation)
+      in
+      { result with terms = []; premises = result.premises @ [ L.Holds application ] }
+  | IfNotHoldPr (id, notation) ->
+      let (application, result) : L.application * terms_result =
+        translate_application env type_parameters functions next id.it [] (Mixfix.args notation)
+      in
+      { result with terms = []; premises = result.premises @ [ L.NotHolds (application, premise.at) ] }
+  | IfPr exp ->
+      let result : condition_result = translate_condition env type_parameters functions next exp in
+      { result.evaluation with terms = []; premises = result.evaluation.premises @ [ L.Prop result.condition ] }
+  | LetPr _ -> unsupported premise.at ("LetPr premise " ^ S.Print.string_of_prem premise)
+  | IterPr (body, (iter, variables, outputs)) ->
+      let body : terms_result = translate_premise env type_parameters functions (next + 1) body in
+      translate_iteration env type_parameters functions premise.at next iter (variables @ outputs) body []
+  | DebugPr _ ->
+      { terms = []; premises = []; binders = []; next; helpers = [] }
+
 let translate_branch (env : env) (type_parameters : string list)
     (relation_name : string) (arity : int) (branch : branch) : L.rule * L.declaration list =
   if List.length branch.arguments <> arity then
