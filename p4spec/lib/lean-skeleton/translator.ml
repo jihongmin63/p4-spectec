@@ -20,6 +20,86 @@ let unsupported (at : region) (construct : string) : 'a =
        (Diagnostic.error ~source:"lean" at
           ("Lean skeleton does not support " ^ construct)))
 
+let translate_branch (env : env) (type_parameters : string list)
+    (relation_name : string) (arity : int) (branch : branch) : L.rule * L.declaration list =
+  if List.length branch.arguments <> arity then
+    unsupported branch.at ("arity mismatch in rule " ^ branch.name ^ " of " ^ relation_name);
+  let env : env = { env with iteration_prefix = relation_name ^ ":" ^ branch.name } in
+  let functions : (string * L.type_ref) list =
+    List.filter_map (function Function (id, typ) -> Some (id.it, typ) | Expression _ -> None) branch.arguments
+  in
+  let translate_argument (next : int) (argument : branch_argument) : term_result =
+    match argument with
+    | Expression exp -> translate_term env type_parameters functions next exp
+    | Function (id, typ) -> pure_term next (L.Variable ("$" ^ id.it, typ))
+  in
+  let result : terms_result = collect_terms translate_argument 0 branch.arguments in
+  let conclusion : L.application =
+    { target = L.Global relation_name;
+      type_arguments = List.map (fun name -> L.TypeParameter name) type_parameters;
+      arguments = result.terms }
+  in
+  let result : terms_result = List.fold_left
+    (fun (result : terms_result) (premise : S.prem) ->
+      let translated : terms_result =
+        translate_premise env type_parameters functions result.next premise
+      in
+      { result with premises = result.premises @ translated.premises;
+        binders = result.binders @ translated.binders; next = translated.next;
+        helpers = result.helpers @ translated.helpers })
+    result branch.premises
+  in
+  let variables : (string * L.type_ref) list =
+    List.concat_map variables_in_term
+      (conclusion.arguments @ List.concat_map Traversal.premise_terms result.premises)
+  in
+  { name = branch.name; binders = unique_binders env branch.at (variables @ result.binders);
+    premises = result.premises; conclusion }, result.helpers
+
+let branch_of_rule (rule : S.rule) : branch =
+  let id, conclusion, premises = rule.it in
+  let name : string = if id.it = "" then "rule" else id.it in
+  {
+    name;
+    arguments = List.map (fun exp -> Expression exp) (Mixfix.args conclusion);
+    premises;
+    at = rule.at;
+  }
+
+let branch_of_clause (type_parameters : string list) (parameters : S.param list)
+    (index : int) (clause : S.clause) : branch =
+  let arguments, result, premises = clause.it in
+  if List.length arguments <> List.length parameters then
+    unsupported clause.at
+      (Printf.sprintf "function clause argument count: expected %d, got %d"
+         (List.length parameters) (List.length arguments));
+  let arguments : branch_argument list =
+    List.mapi
+      (fun position ((parameter : S.param), (argument : S.arg)) ->
+        match parameter.it, argument.it with
+        | ExpP _, ExpA exp -> Expression exp
+        | DefP _, DefA id ->
+            Function
+              (id, translate_parameter_with_parameters type_parameters parameter)
+        | ExpP _, DefA _ ->
+            unsupported argument.at
+              (Printf.sprintf
+                 "function clause argument %d: expected expression, got function"
+                 (position + 1))
+        | DefP _, ExpA _ ->
+            unsupported argument.at
+              (Printf.sprintf
+                 "function clause argument %d: expected function, got expression"
+                 (position + 1)))
+      (List.combine parameters arguments)
+  in
+  {
+    name = "case_" ^ string_of_int index;
+    arguments = arguments @ [ Expression result ];
+    premises;
+    at = clause.at;
+  }
+
 let substitute_application (bindings : (string * L.type_ref) list)
     (application : L.application) : L.application =
   Traversal.map_application_types (substitute_type_parameters bindings) application
