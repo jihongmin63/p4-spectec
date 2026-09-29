@@ -25,6 +25,8 @@ module Lean = struct
     | Text of string
     | FunctionReference of reference
     | Apply of application
+    | Coerce of string * type_ref * type_ref * term
+    | Lambda of string * type_ref * term
     | Native of string * term list
     | Unary of string * term
     | Binary of string * term * term
@@ -107,6 +109,13 @@ module Lean = struct
         notation : notation_part list option;
       }
     | Builtin of builtin
+    | Coercion of {
+        name : string;
+        source : type_ref;
+        target : type_ref;
+        type_parameters : string list;
+        cases : (string * string * int) list;
+      }
 
   type located_declaration = {
     declaration : declaration;

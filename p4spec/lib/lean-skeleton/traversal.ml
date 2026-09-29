@@ -10,6 +10,9 @@ let rec map_term_types (map : L.type_ref -> L.type_ref) (term : L.term) : L.term
         ({ reference with type_arguments = List.map map reference.type_arguments },
          List.map recurse arguments)
   | Apply application -> L.Apply (map_application_types map application)
+  | Coerce (name, source, target, value) ->
+      L.Coerce (name, map source, map target, recurse value)
+  | Lambda (name, typ, body) -> L.Lambda (name, map typ, recurse body)
   | Native (name, arguments) -> L.Native (name, List.map recurse arguments)
   | Unary (operator, value) -> L.Unary (operator, recurse value)
   | Binary (operator, left, right) -> L.Binary (operator, recurse left, recurse right)
@@ -63,6 +66,7 @@ let term_children (term : L.term) : L.term list =
   match term with
   | Constructor (_, arguments) | Native (_, arguments) | ListLiteral arguments -> arguments
   | Apply application -> application.arguments
+  | Coerce (_, _, _, value) | Lambda (_, _, value) -> [ value ]
   | Unary (_, value) | Typed (value, _) | Projection (_, _, value) -> [ value ]
   | Binary (_, left, right) | Tuple (left, right) | Index (left, right) -> [ left; right ]
   | StructureLiteral (_, fields) -> List.map snd fields
