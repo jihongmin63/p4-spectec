@@ -20,6 +20,178 @@ let unsupported (at : region) (construct : string) : 'a =
        (Diagnostic.error ~source:"lean" at
           ("Lean skeleton does not support " ^ construct)))
 
+let rec translate_type_with_parameters (type_parameters : string list)
+    (typ : S.typ) : L.type_ref =
+  match typ.it with
+  | BoolT -> L.BuiltinType ("Bool", [])
+  | NumT `NatT -> L.BuiltinType ("Nat", [])
+  | NumT `IntT -> L.BuiltinType ("Int", [])
+  | TextT -> L.BuiltinType ("String", [])
+  | VarT (id, []) when List.mem id.it type_parameters -> L.TypeParameter id.it
+  | VarT (id, []) -> L.Name id.it
+  | VarT (id, arguments) ->
+      L.Applied
+        ( id.it,
+          List.map
+            (fun (argument : S.targ) ->
+              translate_type_with_parameters type_parameters
+                (argument.it $ argument.at))
+            arguments )
+  | IterT (element, Opt) ->
+      L.BuiltinType
+        ("Option", [ translate_type_with_parameters type_parameters element ])
+  | IterT (element, List) ->
+      L.BuiltinType
+        ("List", [ translate_type_with_parameters type_parameters element ])
+  | TupleT [ left; right ] ->
+      L.Pair
+        ( translate_type_with_parameters type_parameters left,
+          translate_type_with_parameters type_parameters right )
+  | _ -> unsupported typ.at ("type " ^ S.Print.string_of_typ typ)
+
+let translate_type (typ : S.typ) : L.type_ref =
+  translate_type_with_parameters [] typ
+
+let rec translate_parameter_with_parameters (type_parameters : string list)
+    (parameter : S.param) : L.type_ref =
+  match parameter.it with
+  | ExpP typ -> translate_type_with_parameters type_parameters typ
+  | DefP (id, tparams, parameters, result) ->
+      if tparams <> [] then
+        unsupported parameter.at ("type parameters of function parameter " ^ id.it);
+      L.RelationType
+        ( List.map (translate_parameter_with_parameters type_parameters) parameters,
+          translate_type_with_parameters type_parameters result )
+
+module StringMap = Map.Make (String)
+
+type variant = {
+  type_parameters : string list;
+  cases : (Mixfix.mixop * string) list;
+}
+
+type alias = { type_parameters : string list; body : S.typ }
+
+type structure_field = { atom : S.atom; name : string; typ : S.typ }
+
+type function_kind = RelationFunction | BuiltinFunction of string list | UnsupportedFunction of string
+
+type env = {
+  iteration_prefix : string;
+  recursive_otherwise : string list;
+  functions : function_kind StringMap.t;
+  constructors : variant StringMap.t;
+  aliases : alias StringMap.t;
+  structures : structure_field list StringMap.t;
+}
+
+let structure_fields (fields : S.typfield list) : structure_field list =
+  List.map
+    (fun ((atom, typ) : S.typfield) ->
+      let name : string =
+        match atom.it with
+        | Domain.Atom.Keyword name -> name
+        | Domain.Atom.Tag name -> "_" ^ name
+        | value -> Domain.Atom.string_of_atom value
+      in
+      { atom; name; typ })
+    fields
+
+let prefix_name (notation : 'a Mixfix.t) : string option =
+  let atom : S.atom option =
+    match notation with
+    | Mixfix.Atom atom -> Some atom
+    | Mixfix.Seq (Mixfix.Atom atom :: arguments)
+      when List.for_all (function Mixfix.Arg _ -> true | _ -> false) arguments ->
+        Some atom
+    | _ -> None
+  in
+  match atom with
+  | Some { it = Domain.Atom.Keyword name; _ } -> Some name
+  | Some { it = Domain.Atom.Tag name; _ } -> Some ("_" ^ name)
+  | _ -> None
+
+let rec mixop_parts (notation : 'a Mixfix.t) : string list =
+  match notation with
+  | Mixfix.Arg _ -> [ "%" ]
+  | Mixfix.Atom atom -> [ Domain.Atom.string_of_atom atom.it ]
+  | Mixfix.Brack (left, inner, right) ->
+      mixop_parts (Mixfix.Atom left) @ mixop_parts inner
+      @ mixop_parts (Mixfix.Atom right)
+  | Mixfix.Infix (left, atom, right) ->
+      mixop_parts left @ mixop_parts (Mixfix.Atom atom) @ mixop_parts right
+  | Mixfix.Seq parts -> List.concat_map mixop_parts parts
+
+let names_of_cases (cases : S.typcase list) : (Mixfix.mixop * string) list =
+  let prefix_names : string list =
+    List.filter_map (fun (notation, _, _) -> prefix_name notation.it) cases
+  in
+  List.map
+    (fun (notation, _, _) ->
+      let name : string =
+        match prefix_name notation.it with
+        | Some name
+          when List.length (List.filter (String.equal name) prefix_names) = 1 ->
+            name
+        | _ -> String.concat " " (mixop_parts notation.it)
+      in
+      (Mixfix.to_mixop notation.it, name))
+    cases
+
+let build_env (program : S.spec) : env =
+  List.fold_left
+    (fun (env : env) (declaration : S.def) ->
+      match declaration.it with
+      | TypD (id, tparams, { it = VariantT cases; _ }, _) ->
+          {
+            env with
+            constructors =
+              StringMap.add id.it
+                {
+                  type_parameters =
+                    List.map (fun (param : S.tparam) -> param.it) tparams;
+                  cases = names_of_cases cases;
+                }
+                env.constructors;
+          }
+      | TypD (id, tparams, { it = PlainT typ; _ }, _) ->
+          {
+            env with
+            aliases =
+              StringMap.add id.it
+                {
+                  type_parameters =
+                    List.map (fun (param : S.tparam) -> param.it) tparams;
+                  body = typ;
+                }
+                env.aliases;
+          }
+      | TypD (id, _, { it = StructT fields; _ }, _) ->
+          {
+            env with
+            structures =
+              StringMap.add id.it (structure_fields fields) env.structures;
+          }
+      | FuncDecD (id, _, _, _, _, _, _) ->
+          { env with functions = StringMap.add id.it RelationFunction env.functions }
+      | BuiltinDecD (id, parameters, _, _, _) ->
+          { env with functions = StringMap.add id.it
+              (BuiltinFunction (List.map (fun (parameter : S.tparam) -> parameter.it) parameters)) env.functions }
+      | ExternDecD (id, _, _, _, _) ->
+          { env with functions = StringMap.add id.it (UnsupportedFunction "external function") env.functions }
+      | TableDecD (id, _, _, _, _) ->
+          { env with functions = StringMap.add id.it (UnsupportedFunction "table") env.functions }
+      | _ -> env)
+    {
+      iteration_prefix = "";
+      recursive_otherwise = Source_dependencies.recursive_otherwise program;
+      functions = StringMap.empty;
+      constructors = StringMap.empty;
+      aliases = StringMap.empty;
+      structures = StringMap.empty;
+    }
+    program
+
 let rec substitute_type_parameters (bindings : (string * L.type_ref) list)
     (typ : L.type_ref) : L.type_ref =
   match typ with
