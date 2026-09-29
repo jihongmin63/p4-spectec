@@ -1,0 +1,13 @@
+(rule
+ (target tuple.lean)
+ (deps tuple.watsup tuple-proof.lean)
+ (action
+  (with-stdout-to tuple.lean
+   (progn
+    (run %{exe:../../lib/lean-skeleton/main.exe} %{dep:tuple.watsup})
+    (cat %{dep:tuple-proof.lean})))))
+
+(rule
+ (alias backend-lean)
+ (deps tuple.lean)
+ (action (run lean tuple.lean)))

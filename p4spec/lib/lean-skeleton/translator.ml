@@ -20,6 +20,12 @@ let unsupported (at : region) (construct : string) : 'a =
        (Diagnostic.error ~source:"lean" at
           ("Lean skeleton does not support " ^ construct)))
 
+let rec nest_pairs (make : 'a -> 'a -> 'a) (values : 'a list) : 'a =
+  match values with
+  | [last] -> last
+  | first :: rest -> make first (nest_pairs make rest)
+  | [] -> invalid_arg "cannot nest an empty tuple"
+
 let rec translate_type_with_parameters (type_parameters : string list)
     (typ : S.typ) : L.type_ref =
   match typ.it with
@@ -43,10 +49,9 @@ let rec translate_type_with_parameters (type_parameters : string list)
   | IterT (element, List) ->
       L.BuiltinType
         ("List", [ translate_type_with_parameters type_parameters element ])
-  | TupleT [ left; right ] ->
-      L.Pair
-        ( translate_type_with_parameters type_parameters left,
-          translate_type_with_parameters type_parameters right )
+  | TupleT (_ :: _ :: _ as elements) ->
+      nest_pairs (fun left right -> L.Pair (left, right))
+        (List.map (translate_type_with_parameters type_parameters) elements)
   | _ -> unsupported typ.at ("type " ^ S.Print.string_of_typ typ)
 
 let translate_type (typ : S.typ) : L.type_ref =
@@ -697,12 +702,16 @@ let rec check_term (env : env) (type_parameters : string list) (at : region)
       | _ -> unsupported at
           ("MixopSC requires variant source and target: "
            ^ type_code source ^ " <: " ^ type_code target))
-  | TupleSC [ left_check; right_check ] ->
+  | TupleSC (left_check :: (_ :: _ as right_checks)) ->
       (match source, target with
       | Pair (source_left, source_right), Pair (target_left, target_right) ->
           let (left, right) : L.term * L.term = match term with
             | Tuple (left, right) -> left, right
             | _ -> L.Native ("Prod.fst", [ term ]), L.Native ("Prod.snd", [ term ])
+          in
+          let right_check : S.subcheck = match right_checks with
+            | [check] -> check
+            | checks -> TupleSC checks
           in
           L.Binary ("&&",
             check_term env type_parameters at source_left target_left left_check left,
@@ -931,7 +940,8 @@ let rec translate_term (env : env) (type_parameters : string list)
       (* The source is the runtime type: -n and nat - nat are annotated Nat but
          already translate to Int terms. *)
       unary value (cast_term env exp.at (numeric_type value) (expanded exp))
-  | TupleE [ left; right ] -> binary left right (fun left right -> L.Tuple (left, right))
+  | TupleE (_ :: _ :: _ as elements) ->
+      build elements (nest_pairs (fun left right -> L.Tuple (left, right)))
   | OptE None -> pure_term next (L.Typed (L.Native ("Option.none", []), typ))
   | OptE (Some value) -> unary value (fun term -> L.Native ("Option.some", [ term ]))
   | ListE values -> build values (fun terms -> L.Typed (L.ListLiteral terms, typ))
