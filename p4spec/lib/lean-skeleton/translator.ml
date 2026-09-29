@@ -20,6 +20,172 @@ let unsupported (at : region) (construct : string) : 'a =
        (Diagnostic.error ~source:"lean" at
           ("Lean skeleton does not support " ^ construct)))
 
+let rec substitute_type_parameters (bindings : (string * L.type_ref) list)
+    (typ : L.type_ref) : L.type_ref =
+  match typ with
+  | TypeParameter name -> (
+      match List.assoc_opt name bindings with
+      | Some binding -> binding
+      | None -> typ)
+  | Name _ -> typ
+  | Applied (name, arguments) ->
+      L.Applied (name, List.map (substitute_type_parameters bindings) arguments)
+  | BuiltinType (name, arguments) ->
+      L.BuiltinType (name, List.map (substitute_type_parameters bindings) arguments)
+  | Pair (left, right) ->
+      L.Pair
+        ( substitute_type_parameters bindings left,
+          substitute_type_parameters bindings right )
+  | RelationType (arguments, result) ->
+      L.RelationType
+        ( List.map (substitute_type_parameters bindings) arguments,
+          substitute_type_parameters bindings result )
+
+let rec expand_type_aliases (lookup : string -> L.type_alias option)
+    (at : region) (visited : string list) (typ : L.type_ref) : L.type_ref =
+  let expand (name : string) (arguments : L.type_ref list) : L.type_ref =
+    match lookup name with
+    | Some alias ->
+        if List.mem name visited then
+          unsupported at ("cyclic type alias " ^ name);
+        if List.length alias.type_parameters <> List.length arguments then
+          unsupported at
+            (Printf.sprintf "type alias arity in %s: expected %d, got %d"
+               name (List.length alias.type_parameters) (List.length arguments));
+        let bindings : (string * L.type_ref) list =
+          List.combine alias.type_parameters arguments
+        in
+        substitute_type_parameters bindings alias.body
+        |> expand_type_aliases lookup at (name :: visited)
+    | None ->
+        (match typ with
+        | Name _ -> L.Name name
+        | _ -> L.Applied (name, arguments))
+  in
+  match typ with
+  | Name name -> expand name []
+  | Applied (name, arguments) ->
+      expand name (List.map (expand_type_aliases lookup at visited) arguments)
+  | BuiltinType (name, arguments) ->
+      L.BuiltinType
+        (name, List.map (expand_type_aliases lookup at visited) arguments)
+  | Pair (left, right) ->
+      L.Pair
+        ( expand_type_aliases lookup at visited left,
+          expand_type_aliases lookup at visited right )
+  | RelationType (arguments, result) ->
+      L.RelationType
+        ( List.map (expand_type_aliases lookup at visited) arguments,
+          expand_type_aliases lookup at visited result )
+  | TypeParameter _ -> typ
+
+(* Lean rejects nested inductive occurrences under generic abbreviations. *)
+let expand_generic_aliases (env : env) (at : region) (visited : string list)
+    (typ : L.type_ref) : L.type_ref =
+  let lookup (name : string) : L.type_alias option =
+    match StringMap.find_opt name env.aliases with
+    | Some alias when alias.type_parameters <> [] ->
+        Some
+          { L.name; type_parameters = alias.type_parameters;
+            body = translate_type_with_parameters alias.type_parameters alias.body }
+    | _ -> None
+  in
+  expand_type_aliases lookup at visited typ
+
+let constructor_reference (env : env) (at : region) (type_name : string)
+    (type_arguments : L.type_ref list) (notation : 'a Mixfix.t) :
+    L.constructor_ref =
+  let check_arity (name : string) (parameters : string list)
+      (arguments : L.type_ref list) : unit =
+    if List.length parameters <> List.length arguments then
+      unsupported at
+        (Printf.sprintf "constructor type arity in %s: expected %d, got %d"
+           name (List.length parameters) (List.length arguments))
+  in
+  let rec resolve (visited : string list) (name : string)
+      (arguments : L.type_ref list) : L.constructor_ref =
+    if List.mem name visited then
+      unsupported at ("cyclic constructor type alias " ^ name);
+    match StringMap.find_opt name env.constructors with
+    | Some variant -> (
+        check_arity name variant.type_parameters arguments;
+        match
+          List.find_opt
+            (fun (mixop, _) -> Mixfix.eq_mixop mixop notation)
+            variant.cases
+        with
+        | Some (_, constructor_name) ->
+            if Identifier.contains_closing_quote constructor_name then
+              unsupported at
+                ("constructor name containing closing quote »: " ^ constructor_name);
+            { L.type_name = name; constructor_name; type_arguments = arguments }
+        | None ->
+            unsupported at
+              ("constructor lookup in " ^ name ^ ": "
+              ^ String.concat " " (mixop_parts notation)))
+    | None -> (
+        match StringMap.find_opt name env.aliases with
+        | Some alias -> (
+            check_arity name alias.type_parameters arguments;
+            let bindings : (string * L.type_ref) list =
+              List.combine alias.type_parameters arguments
+            in
+            let body : L.type_ref =
+              substitute_type_parameters bindings
+                (translate_type_with_parameters alias.type_parameters alias.body)
+            in
+            match body with
+            | Name target -> resolve (name :: visited) target []
+            | Applied (target, arguments) ->
+                resolve (name :: visited) target arguments
+            | _ -> unsupported at ("constructor type alias " ^ name))
+        | None ->
+            unsupported at
+              ("constructor lookup in " ^ name ^ ": "
+              ^ String.concat " " (mixop_parts notation)))
+  in
+  resolve [] type_name type_arguments
+
+let translate_constructor (env : env) (type_name : string)
+    (type_parameters : string list) (ctor : S.typcase) : L.constructor =
+  let nottyp, _, _ = ctor in
+  let type_arguments : L.type_ref list =
+    List.map (fun name -> L.TypeParameter name) type_parameters
+  in
+  let reference : L.constructor_ref =
+    constructor_reference env nottyp.at type_name type_arguments nottyp.it
+  in
+  {
+    name = reference.constructor_name;
+    arguments =
+      List.map
+        (fun (argument : S.typ) ->
+          translate_type_with_parameters type_parameters argument
+          |> expand_generic_aliases env argument.at [])
+        (Mixfix.args nottyp.it);
+    result =
+      (match type_arguments with
+      | [] -> L.Name type_name
+      | _ -> L.Applied (type_name, type_arguments));
+  }
+
+let rec translate_notation (notation : S.nottyp') : L.notation_part list =
+  match notation with
+  | Mixfix.Arg _ -> [ L.Hole ]
+  | Mixfix.Atom atom -> (
+      match atom.it with
+      | Domain.Atom.Tag _ -> []
+      | value -> [ L.Literal (Domain.Atom.render_atom value) ])
+  | Mixfix.Brack (left, inner, right) ->
+      translate_notation (Mixfix.Atom left)
+      @ translate_notation inner
+      @ translate_notation (Mixfix.Atom right)
+  | Mixfix.Infix (left, atom, right) ->
+      translate_notation left
+      @ translate_notation (Mixfix.Atom atom)
+      @ translate_notation right
+  | Mixfix.Seq parts -> List.concat_map translate_notation parts
+
 type term_result = {
   term : L.term;
   premises : L.premise list;
