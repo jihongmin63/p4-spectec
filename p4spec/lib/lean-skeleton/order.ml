@@ -5,7 +5,8 @@ module StringSet = Set.Make (String)
 let defined_name (declaration : L.declaration) : string =
   match declaration with
   | Datatype { name; _ } | TypeAlias { name; _ } | Structure { name; _ }
-  | Relation { name; _ } | Builtin { name; _ } | Coercion { name; _ } -> name
+  | Relation { name; _ } | Builtin { name; _ } | Coercion { name; _ }
+  | Membership { name; _ } -> name
 
 let unions (sets : StringSet.t list) : StringSet.t =
   List.fold_left StringSet.union StringSet.empty sets
@@ -35,6 +36,9 @@ let rec term_references (term : L.term) : StringSet.t =
         StringSet.union (reference_names application.target)
           (unions (List.map type_references application.type_arguments))
     | Coerce (name, source, target, _) ->
+        StringSet.add name
+          (StringSet.union (type_references source) (type_references target))
+    | MembershipTest (name, source, target, _, _, _) ->
         StringSet.add name
           (StringSet.union (type_references source) (type_references target))
     | Lambda (_, typ, _) -> type_references typ
@@ -82,6 +86,7 @@ let references (declaration : L.declaration) : StringSet.t =
       unions (List.map type_references (result :: parameters))
   | Coercion { source; target; _ } ->
       StringSet.union (type_references source) (type_references target)
+  | Membership { source; _ } -> type_references source
 
 type node = {
   source : L.located_declaration;
@@ -218,7 +223,7 @@ let expand_declaration (lookup : string -> L.type_alias option)
                   premises = List.map (Traversal.map_premise_types expand) rule.premises;
                   conclusion = Traversal.map_application_types expand rule.conclusion })
               relation.rules }
-  | TypeAlias _ | Builtin _ | Coercion _ -> source.declaration
+  | TypeAlias _ | Builtin _ | Coercion _ | Membership _ -> source.declaration
 
 let validate_relation_values (names : string list)
     (source : L.located_declaration) : unit =
@@ -309,6 +314,7 @@ let group_program (graph : graph) (names : string list) : L.program =
             | Relation { type_parameters; _ } -> type_parameters, Proposition
             | Builtin _ -> Translator.unsupported at "mutual builtin definitions"
             | Coercion _ -> Translator.unsupported at "mutual coercion definitions"
+            | Membership _ -> Translator.unsupported at "mutual membership definitions"
             | TypeAlias _ ->
                 Translator.unsupported at "unexpanded alias in mutual block")
           inductives
@@ -432,7 +438,7 @@ let order_all (declarations : L.located_declaration list) :
       (fun (source : L.located_declaration) ->
         if StringMap.mem (defined_name source.declaration) graph then None
         else match source.declaration with
-        | Coercion _ -> None
+        | Coercion _ | Membership _ -> None
         | _ -> Some source.at)
       declarations
   in
@@ -441,20 +447,21 @@ let order_all (declarations : L.located_declaration list) :
       (fun _ (node : node) -> not (List.mem node.source.at removed_regions))
       graph
   in
-  let used_coercions : StringSet.t =
+  let generated (declaration : L.declaration) : bool =
+    match declaration with Coercion _ | Membership _ -> true | _ -> false
+  in
+  let used_generated : StringSet.t =
     StringMap.fold
       (fun _ (node : node) names ->
-        match node.source.declaration with
-        | Coercion _ -> names
-        | _ -> StringSet.union names node.dependencies)
+        if generated node.source.declaration then names
+        else StringSet.union names node.dependencies)
       graph StringSet.empty
   in
   let graph : graph =
     StringMap.filter
       (fun name (node : node) ->
-        match node.source.declaration with
-        | Coercion _ -> StringSet.mem name used_coercions
-        | _ -> true)
+        not (generated node.source.declaration)
+        || StringSet.mem name used_generated)
       graph
   in
   ( List.concat_map (group_program graph) (topological_components graph),

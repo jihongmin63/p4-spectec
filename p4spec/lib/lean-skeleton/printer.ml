@@ -69,6 +69,8 @@ let rec print_term (bound : string list) (term : L.term) : string =
   | Apply application -> print_application bound application
   | Coerce (name, _, _, value) ->
       "(" ^ print_global_name bound name ^ " " ^ print value ^ ")"
+  | MembershipTest (name, _, _, _, _, value) ->
+      "(" ^ print_global_name bound name ^ " " ^ print value ^ ")"
   | Lambda (name, typ, body) ->
       "(fun (" ^ print_identifier name ^ " : " ^ print_type bound typ
       ^ ") => " ^ print_term (name :: bound) body ^ ")"
@@ -264,6 +266,23 @@ let print_declaration (declaration : L.declaration) : string =
         (Printf.sprintf "def %s%s : %s → %s" (print_identifier name)
            parameters (print_type type_parameters source)
            (print_type type_parameters target) :: clauses)
+  | Membership { name; source; target = _; type_parameters; cases; exhaustive } ->
+      let parameters : string = String.concat ""
+        (List.map (fun parameter ->
+           " {" ^ print_identifier parameter ^ " : Type}") type_parameters)
+      in
+      let clauses : string list = List.map
+        (fun (constructor, arity) ->
+          "  | ." ^ print_identifier constructor
+          ^ String.concat "" (List.init arity (fun _ -> " _")) ^ " => true")
+        cases
+      in
+      let clauses : string list =
+        if exhaustive then clauses else clauses @ [ "  | _ => false" ]
+      in
+      String.concat "\n"
+        (Printf.sprintf "def %s%s : %s → Bool" (print_identifier name)
+           parameters (print_type type_parameters source) :: clauses)
 
 let declaration_notation (declaration : L.declaration) : string list =
   match declaration with

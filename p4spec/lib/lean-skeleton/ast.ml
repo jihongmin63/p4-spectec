@@ -26,6 +26,7 @@ module Lean = struct
     | FunctionReference of reference
     | Apply of application
     | Coerce of string * type_ref * type_ref * term
+    | MembershipTest of string * type_ref * type_ref * (string * int) list * bool * term
     | Lambda of string * type_ref * term
     | Native of string * term list
     | Unary of string * term
@@ -115,6 +116,14 @@ module Lean = struct
         target : type_ref;
         type_parameters : string list;
         cases : (string * string * int) list;
+      }
+    | Membership of {
+        name : string;
+        source : type_ref;
+        target : type_ref;
+        type_parameters : string list;
+        cases : (string * int) list;
+        exhaustive : bool;
       }
 
   type located_declaration = {

@@ -652,6 +652,73 @@ let cast_name (source : L.type_ref) (target : L.type_ref) : string =
       "cast:" ^ Digest.to_hex
         (Digest.string (type_code source ^ ":" ^ type_code target))
 
+let membership_name (source : L.type_ref) (target : L.type_ref) : string =
+  match source, target with
+  | Name source, Name target -> "sub:" ^ source ^ ":" ^ target
+  | _ ->
+      "sub:" ^ Digest.to_hex
+        (Digest.string (type_code source ^ ":" ^ type_code target))
+
+let rec check_term (env : env) (type_parameters : string list) (at : region)
+    (source : L.type_ref) (target : L.type_ref) (subcheck : S.subcheck)
+    (term : L.term) : L.term =
+  match subcheck with
+  | SkipSC -> L.Boolean true
+  | MixopSC mixops ->
+      (match variant_instance env at source, variant_instance env at target with
+      | Some (_, _, source_variant), Some _ ->
+          let cases : (string * int) list =
+            List.filter_map
+              (fun (mixop, name, arguments) ->
+                if List.exists (Mixfix.eq_mixop mixop) mixops then
+                  Some (name, List.length arguments)
+                else None)
+              source_variant.cases
+          in
+          L.MembershipTest
+            (membership_name source target, source, target, cases,
+             List.length cases = List.length source_variant.cases, term)
+      | _ -> unsupported at
+          ("MixopSC requires variant source and target: "
+           ^ type_code source ^ " <: " ^ type_code target))
+  | TupleSC [ left_check; right_check ] ->
+      (match source, target with
+      | Pair (source_left, source_right), Pair (target_left, target_right) ->
+          let (left, right) : L.term * L.term = match term with
+            | Tuple (left, right) -> left, right
+            | _ -> L.Native ("Prod.fst", [ term ]), L.Native ("Prod.snd", [ term ])
+          in
+          L.Binary ("&&",
+            check_term env type_parameters at source_left target_left left_check left,
+            check_term env type_parameters at source_right target_right right_check right)
+      | _ -> unsupported at "TupleSC with non-pair source or target")
+  | TupleSC _ -> unsupported at "TupleSC with unsupported tuple arity"
+  | IterSC (List, item_check) ->
+      (match source, target with
+      | BuiltinType ("List", [ source_item ]), BuiltinType ("List", [ target_item ]) ->
+          let item : L.term = L.Variable ("sub:item", source_item) in
+          L.Native ("List.all", [ term; L.Lambda ("sub:item", source_item,
+            check_term env type_parameters at source_item target_item item_check item) ])
+      | _ -> unsupported at "IterSC List with non-list source or target")
+  | IterSC (Opt, item_check) ->
+      (match source, target with
+      | BuiltinType ("Option", [ source_item ]), BuiltinType ("Option", [ target_item ]) ->
+          let item : L.term = L.Variable ("sub:item", source_item) in
+          L.Native ("Option.all", [ L.Lambda ("sub:item", source_item,
+            check_term env type_parameters at source_item target_item item_check item); term ])
+      | _ -> unsupported at "IterSC Opt with non-option source or target")
+  | RecurseSC typ ->
+      let checked : L.type_ref =
+        translate_type_with_parameters type_parameters typ
+        |> expand_expression_type env at
+      in
+      (match source, checked with
+      | BuiltinType ("Int", []), BuiltinType ("Nat", []) ->
+          L.Decide (L.Comparison (L.Le,
+            L.Number ("0", L.BuiltinType ("Int", [])), term))
+      | _ -> unsupported at
+          ("RecurseSC from " ^ type_code source ^ " to " ^ type_code checked))
+
 let rec cast_term (env : env) (at : region) (source : L.type_ref)
     (target : L.type_ref) (term : L.term) : L.term =
   let source : L.type_ref = expand_expression_type env at source in
@@ -919,7 +986,14 @@ let rec translate_term (env : env) (type_parameters : string list)
             next iter variables evaluation [ body.term, result.term, element_type ]
           in
           { result with premises = iteration.premises; helpers = iteration.helpers })
-  | SubE _ -> unsupported exp.at ("SubE expression " ^ S.Print.string_of_exp exp)
+  | SubE (value, target, subcheck) ->
+      let result : term_result = recurse next value in
+      let source : L.type_ref = expanded value in
+      let target : L.type_ref =
+        translate_type_with_parameters type_parameters target
+        |> expand_expression_type env exp.at
+      in
+      { result with term = check_term env type_parameters exp.at source target subcheck result.term }
   | SliceE _ -> unsupported exp.at "SliceE expression (start and length with bounds checks)"
   | UpdE _ -> unsupported exp.at ("UpdE expression " ^ S.Print.string_of_exp exp)
   | MatchE _ -> unsupported exp.at ("MatchE expression " ^ S.Print.string_of_exp exp)
@@ -1445,7 +1519,7 @@ let translate_declaration (env : env) (decl : S.def) : L.declaration list =
             (List.map (fun (rule : L.rule) -> rule.name) rules)
       | L.TypeAlias _ -> ()
       | L.Structure _ -> ()
-      | L.Builtin _ | L.Coercion _ -> ())
+      | L.Builtin _ | L.Coercion _ | L.Membership _ -> ())
     declarations;
   declarations
 
@@ -1460,8 +1534,34 @@ let rec type_parameters_in (typ : L.type_ref) : string list =
   | RelationType (arguments, result) ->
       List.concat_map type_parameters_in (result :: arguments)
 
+let terms_in_declaration (located : L.located_declaration) : L.term list =
+  match located.declaration with
+  | Relation { rules; _ } ->
+      List.concat_map
+        (fun (rule : L.rule) ->
+          rule.conclusion.arguments
+          @ List.concat_map Traversal.premise_terms rule.premises)
+        rules
+  | _ -> []
+
+let type_declaration_region (program : S.spec) (at : region)
+    (source : L.type_ref) : region =
+  let source_name : string = match source with
+    | Name name | Applied (name, _) -> name
+    | _ -> unsupported at ("generated definition source is not a named type: " ^ type_code source)
+  in
+  match List.find_opt
+    (fun (definition : S.def) -> match definition.it with
+      | TypD (id, _, _, _) -> id.it = source_name
+      | _ -> false) program with
+  | Some definition -> definition.at
+  | None -> unsupported at ("source type declaration " ^ source_name)
+
+let collected_terms (declarations : L.located_declaration list) : L.term list =
+  List.concat_map terms_in_declaration declarations
+
 let coercion_declarations (env : env) (program : S.spec)
-    (declarations : L.located_declaration list) : L.located_declaration list =
+    (terms : L.term list) : L.located_declaration list =
   let rec from_term (term : L.term) :
       (string * L.type_ref * L.type_ref) list =
     let children : (string * L.type_ref * L.type_ref) list =
@@ -1471,20 +1571,8 @@ let coercion_declarations (env : env) (program : S.spec)
     | Coerce (name, source, target, _) -> (name, source, target) :: children
     | _ -> children
   in
-  let from_declaration (located : L.located_declaration) :
-      (string * L.type_ref * L.type_ref) list =
-    match located.declaration with
-    | Relation { rules; _ } ->
-        List.concat_map
-          (fun (rule : L.rule) ->
-            List.concat_map from_term
-              (rule.conclusion.arguments
-               @ List.concat_map Traversal.premise_terms rule.premises))
-          rules
-    | _ -> []
-  in
   let casts : (string * L.type_ref * L.type_ref) list =
-    List.concat_map from_declaration declarations
+    List.concat_map from_term terms
     (* One definition per name: renaming the type parameters of a generic user
        changes the recorded types but not the name. *)
     |> List.sort_uniq (fun (left, _, _) (right, _, _) -> String.compare left right)
@@ -1497,18 +1585,7 @@ let coercion_declarations (env : env) (program : S.spec)
         | None -> unsupported (List.hd program).at
             ("coercion source or target is not a variant: " ^ name)
       in
-      let source_name : string = match source with
-        | Name name | Applied (name, _) -> name
-        | _ -> assert false
-      in
-      let at : region = match List.find_opt
-        (fun (definition : S.def) -> match definition.it with
-          | TypD (id, _, _, _) -> id.it = source_name
-          | _ -> false) program with
-        | Some definition -> definition.at
-        | None -> unsupported (List.hd program).at
-            ("coercion source type declaration " ^ source_name)
-      in
+      let at : region = type_declaration_region program (List.hd program).at source in
       let type_parameters : string list =
         List.sort_uniq String.compare
           (type_parameters_in source @ type_parameters_in target)
@@ -1516,6 +1593,35 @@ let coercion_declarations (env : env) (program : S.spec)
       { L.declaration = L.Coercion
           { name; source; target; type_parameters; cases }; at })
     casts
+
+let membership_declarations (program : S.spec) (terms : L.term list) :
+    L.located_declaration list =
+  let rec from_term (term : L.term) :
+      (string * L.type_ref * L.type_ref * (string * int) list * bool) list =
+    let children : (string * L.type_ref * L.type_ref * (string * int) list * bool) list =
+      List.concat_map from_term (Traversal.term_children term)
+    in
+    match term with
+    | MembershipTest (name, source, target, cases, exhaustive, _) ->
+        (name, source, target, cases, exhaustive) :: children
+    | _ -> children
+  in
+  List.concat_map from_term terms
+  |> List.sort_uniq (fun (left, _, _, _, _) (right, _, _, _, _) -> String.compare left right)
+  |> List.map
+    (fun (name, source, target, cases, exhaustive) ->
+      let at : region = type_declaration_region program (List.hd program).at source in
+      let type_parameters : string list =
+        List.sort_uniq String.compare
+          (type_parameters_in source @ type_parameters_in target)
+      in
+      { L.declaration = L.Membership
+          { name; source; target; type_parameters; cases; exhaustive }; at })
+
+let generated_declarations (env : env) (program : S.spec)
+    (declarations : L.located_declaration list) : L.located_declaration list =
+  let terms : L.term list = collected_terms declarations in
+  coercion_declarations env program terms @ membership_declarations program terms
 
 let translate (program : S.spec) : (L.located_declaration list, Diagnostic.t) result =
   let env : env = build_env program in
@@ -1529,7 +1635,7 @@ let translate (program : S.spec) : (L.located_declaration list, Diagnostic.t) re
              (translate_declaration env declaration))
          program
     in
-    Ok (declarations @ coercion_declarations env program declarations)
+    Ok (declarations @ generated_declarations env program declarations)
   with Unsupported_il diagnostic -> Error diagnostic
 
 let translate_all (program : S.spec) :
@@ -1550,5 +1656,5 @@ let translate_all (program : S.spec) :
       ([], []) program
   in
   let declarations : L.located_declaration list = List.rev declarations in
-  (declarations @ coercion_declarations env program declarations,
+  (declarations @ generated_declarations env program declarations,
    List.rev diagnostics)
