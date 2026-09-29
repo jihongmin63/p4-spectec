@@ -1,0 +1,14 @@
+(executable
+ (name main)
+ (modules
+  ast
+  traversal
+  builtin
+  identifier
+  source_dependencies
+  translator
+  order
+  printer
+  pipeline
+  main)
+ (libraries lang domain util pass diagnostic))

@@ -1120,6 +1120,7 @@ let translate_otherwise_relation (env : env) (name : string)
     | _ -> unsupported otherwise.at ("missing otherwise relation " ^ name)
   in
   rename_relation_declarations env type_parameters (regular @ public)
+
 let rec validate_names (at : region) (names : string list) : unit =
   match names with
   | [] -> ()
