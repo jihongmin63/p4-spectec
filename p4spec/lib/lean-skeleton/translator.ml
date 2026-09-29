@@ -74,7 +74,8 @@ type alias = { type_parameters : string list; body : S.typ }
 
 type structure_field = { atom : S.atom; name : string; typ : S.typ }
 
-type function_kind = RelationFunction | BuiltinFunction of string list | UnsupportedFunction of string
+type function_kind = RelationFunction | BuiltinFunction of string list
+  | BuiltinRelation of string list | UnsupportedFunction of string
 
 type env = {
   iteration_prefix : string;
@@ -178,8 +179,11 @@ let build_env (program : S.spec) : env =
       | FuncDecD (id, _, _, _, _, _, _) ->
           { env with functions = StringMap.add id.it RelationFunction env.functions }
       | BuiltinDecD (id, parameters, _, _, _) ->
+          let names : string list =
+            List.map (fun (parameter : S.tparam) -> parameter.it) parameters in
           { env with functions = StringMap.add id.it
-              (BuiltinFunction (List.map (fun (parameter : S.tparam) -> parameter.it) parameters)) env.functions }
+              (if Builtin_relation.is_relation id.it then BuiltinRelation names
+               else BuiltinFunction names) env.functions }
       | ExternDecD (id, _, _, _, _) ->
           { env with functions = StringMap.add id.it (UnsupportedFunction "external function") env.functions }
       | TableDecD (id, _, _, _, _) ->
@@ -320,6 +324,18 @@ let constructor_reference (env : env) (at : region) (type_name : string)
               ^ String.concat " " (mixop_parts notation)))
   in
   resolve [] type_name type_arguments
+
+let builtin_constructor (env : env) (at : region) (type_name : string)
+    (type_arguments : L.type_ref list) (parts : string list) : L.constructor_ref =
+  match StringMap.find_opt type_name env.constructors with
+  | None -> unsupported at ("builtin constructor lookup in " ^ type_name)
+  | Some variant ->
+      match List.find_opt
+        (fun (mixop, _, _) -> mixop_parts mixop = parts) variant.cases with
+      | None -> unsupported at
+          ("builtin constructor mixop in " ^ type_name ^ ": " ^ String.concat " " parts)
+      | Some (mixop, _, _) ->
+          constructor_reference env at type_name type_arguments mixop
 
 let translate_constructor (env : env) (type_name : string)
     (type_parameters : string list) (ctor : S.typcase) : L.constructor =
@@ -852,6 +868,10 @@ let rec translate_term (env : env) (type_parameters : string list)
         if List.mem_assoc id.it functions then false
         else match StringMap.find_opt id.it env.functions with
         | Some RelationFunction -> false
+        | Some (BuiltinRelation parameters) -> (
+            match Builtin_relation.signature id.it parameters with
+            | Ok _ -> false
+            | Error reason -> unsupported exp.at ("builtin call " ^ reason))
         | Some (BuiltinFunction parameters) -> (
             match Builtin.translate id.it parameters with
             | Ok _ -> true
@@ -1470,15 +1490,32 @@ let translate_declaration (env : env) (decl : S.def) : L.declaration list =
         let result : L.type_ref =
           translate_type_with_parameters type_parameters result
         in
-        (match Builtin.translate id.it type_parameters with
-        | Ok expected ->
-            if parameters <> expected.parameters || result <> expected.result then
-              unsupported decl.at
-                ("builtin function " ^ id.it
-               ^ " because its signature differs from the SpecTec implementation");
-            [ L.Builtin { expected with name = "$" ^ expected.name } ]
-        (* A rule-less relation would claim that the builtin has no result. *)
-        | Error reason -> unsupported decl.at ("builtin function " ^ reason))
+        if Builtin_relation.is_relation id.it then
+          let (expected_parameters, expected_result) : L.type_ref list * L.type_ref =
+            match Builtin_relation.signature id.it type_parameters with
+            | Ok signature -> signature
+            | Error reason -> unsupported decl.at ("builtin relation " ^ reason)
+          in
+          if parameters <> expected_parameters || result <> expected_result then
+            unsupported decl.at
+              ("builtin relation " ^ id.it
+             ^ " because its signature differs from the SpecTec implementation");
+          (match
+             Builtin_relation.translate id.it type_parameters
+               (builtin_constructor env decl.at)
+           with
+          | Ok declarations -> declarations
+          | Error reason -> unsupported decl.at ("builtin relation " ^ reason))
+        else
+          (match Builtin.translate id.it type_parameters with
+          | Ok expected ->
+              if parameters <> expected.parameters || result <> expected.result then
+                unsupported decl.at
+                  ("builtin function " ^ id.it
+                 ^ " because its signature differs from the SpecTec implementation");
+              [ L.Builtin { expected with name = "$" ^ expected.name } ]
+          (* A rule-less relation would claim that the builtin has no result. *)
+          | Error reason -> unsupported decl.at ("builtin function " ^ reason))
     | TableDecD (id, _, _, _, _) ->
         unsupported decl.at ("table declaration " ^ id.it)
     | FuncDecD (id, _, _, _, _, Some otherwise, _)

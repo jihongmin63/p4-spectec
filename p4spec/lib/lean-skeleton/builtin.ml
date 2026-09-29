@@ -68,10 +68,6 @@ let translate (builtin_name : string) (type_parameters : string list) :
          (Nat.xor a b) | Int.ofNat a, Int.negSucc b => Int.negSucc (Nat.xor a \
          b) | Int.negSucc a, Int.ofNat b => Int.negSucc (Nat.xor a b) | \
          Int.negSucc a, Int.negSucc b => Int.ofNat (Nat.xor a b)"
-  | "max_nat", _ ->
-      Error "max_nat because the SpecTec builtin fails on an empty list"
-  | "min_nat", _ ->
-      Error "min_nat because the SpecTec builtin fails on an empty list"
   | "text_to_int", _ ->
       Error
         "text_to_int because Lean and SpecTec accept different numeral syntax"
@@ -79,19 +75,8 @@ let translate (builtin_name : string) (type_parameters : string list) :
       Error "int_to_text because the Nat/Int runtime tag affects its output"
   | "split_text", _ ->
       Error "split_text because SpecTec requires a one-byte separator"
-  | "strip_prefix", _ ->
-      Error "strip_prefix because SpecTec fails when the prefix does not match"
-  | "strip_suffix", _ ->
-      Error "strip_suffix because SpecTec fails when the suffix does not match"
   | "transpose_", _ ->
       Error "transpose_ because SpecTec rejects ragged matrices"
-  | "partition_", _ ->
-      Error
-        "partition_ because large indices fail in SpecTec's machine-int \
-         conversion"
-  | "assoc_", _ -> Error "assoc_ because SpecTec compares tagged runtime values"
-  | "distinct_", _ ->
-      Error "distinct_ because SpecTec compares tagged runtime values"
   | "intersect_set", _ ->
       Error "intersect_set without SpecTec set representation"
   | "union_set", _ -> Error "union_set without SpecTec set representation"
@@ -99,25 +84,8 @@ let translate (builtin_name : string) (type_parameters : string list) :
   | "diff_set", _ -> Error "diff_set without SpecTec set representation"
   | "sub_set", _ -> Error "sub_set without SpecTec set representation"
   | "eq_set", _ -> Error "eq_set without SpecTec set representation"
-  | "find_map", _ -> Error "find_map without SpecTec ordered map representation"
-  | "find_maps", _ ->
-      Error "find_maps without SpecTec ordered map representation"
-  | "add_map", _ -> Error "add_map without SpecTec ordered map representation"
-  | "adds_map", _ -> Error "adds_map without SpecTec ordered map representation"
-  | "update_map", _ ->
-      Error "update_map without SpecTec ordered map representation"
   | "fresh_typeId", _ ->
       Error "fresh_typeId because it changes a counter between calls"
-  | "shl", _ ->
-      Error "shl without SpecTec's shift limit and negative-offset rules"
-  | "shr", _ ->
-      Error "shr without SpecTec's truncating division and shift limit"
-  | "shr_arith", _ ->
-      Error "shr_arith without SpecTec's per-step sign extension"
-  | "bitstr_to_int", _ ->
-      Error "bitstr_to_int without SpecTec's width bounds and failure"
-  | "int_to_bitstr", _ ->
-      Error "int_to_bitstr without SpecTec's width bounds and failure"
   | "bits_to_int_signed", _ ->
       Error
         "bits_to_int_signed without the SpecTec bits type and empty-input error"

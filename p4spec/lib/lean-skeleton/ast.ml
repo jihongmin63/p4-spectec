@@ -45,6 +45,7 @@ module Lean = struct
     | Comparison of comparison * term * term
     | Membership of term * term
     | IsTrue of term
+    | Predicate of term
     | And of prop * prop
     | Or of prop * prop
     | Not of prop

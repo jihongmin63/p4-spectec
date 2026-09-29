@@ -35,6 +35,7 @@ and map_prop_types (map : L.type_ref -> L.type_ref) (prop : L.prop) : L.prop =
   | Membership (element, collection) ->
       L.Membership (map_term_types map element, map_term_types map collection)
   | IsTrue term -> L.IsTrue (map_term_types map term)
+  | Predicate term -> L.Predicate (map_term_types map term)
   | Not prop -> L.Not (map_prop_types map prop)
   | And (left, right) -> L.And (map_prop_types map left, map_prop_types map right)
   | Or (left, right) -> L.Or (map_prop_types map left, map_prop_types map right)
@@ -60,6 +61,7 @@ let rec prop_terms (prop : L.prop) : L.term list =
   match prop with
   | Comparison (_, left, right) | Membership (left, right) -> [ left; right ]
   | IsTrue term -> [ term ]
+  | Predicate term -> [ term ]
   | Not prop -> prop_terms prop
   | And (left, right) | Or (left, right) | Implies (left, right) | Iff (left, right) ->
       prop_terms left @ prop_terms right

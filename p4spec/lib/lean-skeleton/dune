@@ -4,6 +4,7 @@
   ast
   traversal
   builtin
+  builtin_relation
   identifier
   source_dependencies
   translator

@@ -100,6 +100,7 @@ and print_prop (bound : string list) (prop : L.prop) : string =
       "(" ^ print_term bound element ^ " ∈ " ^ print_term bound collection ^ ")"
 
   | IsTrue term -> "(" ^ print_term bound term ^ " = true)"
+  | Predicate term -> print_term bound term
   | Not prop -> "(¬ " ^ print_prop bound prop ^ ")"
   | And (left, right) -> print_connective bound "∧" left right
   | Or (left, right) -> print_connective bound "∨" left right
