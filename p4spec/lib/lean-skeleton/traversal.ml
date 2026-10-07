@@ -44,6 +44,8 @@ and map_prop_types (map : L.type_ref -> L.type_ref) (prop : L.prop) : L.prop =
   | Or (left, right) -> L.Or (map_prop_types map left, map_prop_types map right)
   | Implies (left, right) -> L.Implies (map_prop_types map left, map_prop_types map right)
   | Iff (left, right) -> L.Iff (map_prop_types map left, map_prop_types map right)
+  | Forall (name, typ, body) ->
+      L.Forall (name, map typ, map_prop_types map body)
 
 and map_application_types (map : L.type_ref -> L.type_ref)
     (application : L.application) : L.application =
@@ -71,6 +73,7 @@ let rec prop_terms (prop : L.prop) : L.term list =
   | Not prop -> prop_terms prop
   | And (left, right) | Or (left, right) | Implies (left, right) | Iff (left, right) ->
       prop_terms left @ prop_terms right
+  | Forall (_, _, body) -> prop_terms body
 
 let term_children (term : L.term) : L.term list =
   match term with
@@ -158,6 +161,7 @@ and map_prop_applications (map : L.application -> L.application)
   | Or (left, right) -> L.Or (recurse left, recurse right)
   | Implies (left, right) -> L.Implies (recurse left, recurse right)
   | Iff (left, right) -> L.Iff (recurse left, recurse right)
+  | Forall (name, typ, body) -> L.Forall (name, typ, recurse body)
 
 let map_premise_applications (map : L.application -> L.application)
     (premise : L.premise) : L.premise =

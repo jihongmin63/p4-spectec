@@ -69,6 +69,7 @@ module Lean = struct
     | Not of prop
     | Implies of prop * prop
     | Iff of prop * prop
+    | Forall of string * type_ref * prop
 
   and application = {
     target : reference;

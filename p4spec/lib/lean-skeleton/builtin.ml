@@ -13,6 +13,18 @@ let definition (name : string) (type_parameters : string list)
     { name; type_parameters; equality_parameters = []; print_parameters = [];
       parameters; result; body }
 
+let band_body : string =
+  "match arg0, arg1 with | Int.ofNat a, Int.ofNat b => Int.ofNat \
+   (Nat.land a b) | Int.ofNat a, Int.negSucc b => Int.ofNat (a - \
+   Nat.land a b) | Int.negSucc a, Int.ofNat b => Int.ofNat (b - Nat.land \
+   a b) | Int.negSucc a, Int.negSucc b => Int.negSucc (Nat.lor a b)"
+
+let bxor_body : string =
+  "match arg0, arg1 with | Int.ofNat a, Int.ofNat b => Int.ofNat \
+   (Nat.xor a b) | Int.ofNat a, Int.negSucc b => Int.negSucc (Nat.xor a \
+   b) | Int.negSucc a, Int.ofNat b => Int.negSucc (Nat.xor a b) | \
+   Int.negSucc a, Int.negSucc b => Int.ofNat (Nat.xor a b)"
+
 let translate (builtin_name : string) (type_parameters : string list) :
     (L.builtin, string) result =
   let nat : L.type_ref = L.BuiltinType ("Nat", []) in
@@ -51,12 +63,7 @@ let translate (builtin_name : string) (type_parameters : string list) :
         "arg0.foldl (fun value bit => 2 * value + (if bit then 1 else 0)) (0 : \
          Int)"
   | "bneg", [] -> define [ int ] int "-arg0 - 1"
-  | "band", [] ->
-      define [ int; int ] int
-        "match arg0, arg1 with | Int.ofNat a, Int.ofNat b => Int.ofNat \
-         (Nat.land a b) | Int.ofNat a, Int.negSucc b => Int.ofNat (a - \
-         Nat.land a b) | Int.negSucc a, Int.ofNat b => Int.ofNat (b - Nat.land \
-         a b) | Int.negSucc a, Int.negSucc b => Int.negSucc (Nat.lor a b)"
+  | "band", [] -> define [ int; int ] int band_body
   | "bor", [] ->
       define [ int; int ] int
         "match arg0, arg1 with | Int.ofNat a, Int.ofNat b => Int.ofNat \
@@ -64,15 +71,12 @@ let translate (builtin_name : string) (type_parameters : string list) :
          Nat.land a b) | Int.negSucc a, Int.ofNat b => Int.negSucc (a - \
          Nat.land a b) | Int.negSucc a, Int.negSucc b => Int.negSucc (Nat.land \
          a b)"
-  | "bxor", [] ->
-      define [ int; int ] int
-        "match arg0, arg1 with | Int.ofNat a, Int.ofNat b => Int.ofNat \
-         (Nat.xor a b) | Int.ofNat a, Int.negSucc b => Int.negSucc (Nat.xor a \
-         b) | Int.negSucc a, Int.ofNat b => Int.negSucc (Nat.xor a b) | \
-         Int.negSucc a, Int.negSucc b => Int.ofNat (Nat.xor a b)"
+  | "bxor", [] -> define [ int; int ] int bxor_body
   | "text_to_int", _ ->
       Error
         "text_to_int because Lean and SpecTec accept different numeral syntax"
+  (* PL list subsumption does not retag Nat elements, so an int-typed lookup can
+     still reach this builtin with a Nat runtime tag. *)
   | "int_to_text", _ ->
       Error "int_to_text because the Nat/Int runtime tag affects its output"
   | "split_text", _ ->

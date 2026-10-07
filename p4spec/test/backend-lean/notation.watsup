@@ -1,0 +1,77 @@
+syntax notationType = NOTATION_TYPE
+syntax notationResult = NOTATION_RESULT
+syntax castResult = OK nat*
+syntax cursor = CURSOR
+syntax typingContext = TYPING_CONTEXT
+syntax expression = EXPRESSION
+
+relation A: notationType -> notationType : notationResult
+  hint(input %0 %1 %2)
+
+rule A/base:
+  NOTATION_TYPE -> NOTATION_TYPE : NOTATION_RESULT
+
+relation B: notationType -> notationType : notationResult
+  hint(input %0 %1 %2)
+
+rule B/base:
+  NOTATION_TYPE -> NOTATION_TYPE : NOTATION_RESULT
+
+relation Apply: notationType -> notationType : castResult
+  hint(input %0 %1 %2)
+
+rule Apply/base:
+  NOTATION_TYPE -> NOTATION_TYPE : OK eps
+
+relation Delimited:
+  notationType |- notationType `( notationType `) ~> notationResult
+  hint(input %0 %1 %2 %3)
+
+rule Delimited/base:
+  NOTATION_TYPE |- NOTATION_TYPE `( NOTATION_TYPE `) ~> NOTATION_RESULT
+
+relation At:
+  notationType '@' notationType : notationResult
+  hint(input %0 %1 %2)
+
+rule At/base:
+  NOTATION_TYPE '@' NOTATION_TYPE : NOTATION_RESULT
+
+relation AtTwice:
+  notationType |- notationType '@' notationType
+    : notationType ',' notationType '@' notationResult
+  hint(input %0 %1 %2 %3 %4 %5)
+
+rule AtTwice/base:
+  NOTATION_TYPE |- NOTATION_TYPE '@' NOTATION_TYPE
+    : NOTATION_TYPE ',' NOTATION_TYPE '@' NOTATION_RESULT
+
+relation Dot:
+  notationType '.' notationType : notationResult
+  hint(input %0 %1 %2)
+
+rule Dot/base:
+  NOTATION_TYPE '.' NOTATION_TYPE : NOTATION_RESULT
+
+relation DotCall:
+  notationType notationType |- notationType '.' notationType
+    `( notationType `) : notationType notationType notationResult
+  hint(input %0 %1 %2 %3 %4 %5 %6 %7)
+
+rule DotCall/base:
+  NOTATION_TYPE NOTATION_TYPE |- NOTATION_TYPE '.' NOTATION_TYPE
+    `( NOTATION_TYPE `) : NOTATION_TYPE NOTATION_TYPE NOTATION_RESULT
+
+relation Adjacent:
+  cursor typingContext |- expression : notationType
+  hint(input %0 %1 %2 %3)
+
+rule Adjacent/base:
+  CURSOR TYPING_CONTEXT |- EXPRESSION : NOTATION_TYPE
+
+relation AdjacentOther:
+  cursor typingContext |- expression : notationType
+  hint(input %0 %1 %2 %3)
+
+rule AdjacentOther/base:
+  CURSOR TYPING_CONTEXT |- EXPRESSION : NOTATION_TYPE

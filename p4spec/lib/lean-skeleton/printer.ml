@@ -252,6 +252,11 @@ and print_prop (bound : string list) (prop : L.prop) : string =
   | Or (left, right) -> print_connective bound "∨" left right
   | Implies (left, right) -> print_connective bound "→" left right
   | Iff (left, right) -> print_connective bound "↔" left right
+  | Forall (name, typ, body) ->
+      let printed_type : string = print_type bound typ in
+      let body_bound : string list = name :: bound in
+      "(∀ (" ^ print_identifier name ^ " : " ^ printed_type ^ "), "
+      ^ print_prop body_bound body ^ ")"
 
 and print_connective (bound : string list) (operator : string)
     (left : L.prop) (right : L.prop) : string =
@@ -347,20 +352,113 @@ let print_builtin (builtin : L.builtin) : string =
 let quote_notation_literal (literal : string) : string =
   "\"" ^ escape_string literal ^ "\""
 
-let print_notation (name : string) (parts : L.notation_part list) : string =
-  let (_, pattern, arguments) : int * string list * string list =
-    List.fold_left
-      (fun (index, pattern, arguments) part ->
-        match part with
-        | L.Hole ->
-            let argument : string = "x" ^ string_of_int index in
-            (index + 1, pattern @ [ argument ^ ":arg" ], arguments @ [ argument ])
-        | L.Literal literal ->
-            (index, pattern @ [ quote_notation_literal literal ], arguments))
-      (0, [], []) parts
+let notation_priority (remaining : L.notation_part list) : string =
+  match remaining with
+  | L.Hole :: _
+  | L.Literal "(" :: _
+  | L.Literal "@" :: _
+  | L.Literal "." :: _ ->
+      "arg"
+  | _ -> "51"
+
+let print_simple_notation (printed_name : string)
+    (parts : L.notation_part list) : string =
+  let rec print_parts (index : int) (pattern : string list)
+      (arguments : string list) (remaining : L.notation_part list) :
+      string list * string list =
+    match remaining with
+    | [] -> (pattern, arguments)
+    | L.Hole :: rest ->
+        let argument : string = "x" ^ string_of_int index in
+        print_parts (index + 1)
+          (pattern @ [ argument ^ ":" ^ notation_priority rest ])
+          (arguments @ [ argument ]) rest
+    | L.Literal literal :: rest ->
+        print_parts index
+          (pattern @ [ quote_notation_literal (" " ^ literal ^ " ") ])
+          arguments rest
   in
-  Printf.sprintf "notation:50 %s => %s" (String.concat " " pattern)
-    (String.concat " " (print_global_name [] name :: arguments))
+  let (pattern, arguments) : string list * string list =
+    print_parts 0 [] [] parts
+  in
+  Printf.sprintf "scoped notation:50 %s => %s"
+    (String.concat " " pattern)
+    (String.concat " " (("_root_.SpecTec." ^ printed_name) :: arguments))
+
+let print_syntax_notation (printed_name : string)
+    (parts : L.notation_part list) : string =
+  let rec print_parts (hole_index : int) (child_index : int)
+      (pattern : string list) (macro_arguments : string list)
+      (unexpander_arguments : string list) (remaining : L.notation_part list) :
+      string list * string list * string list * int =
+    match remaining with
+    | [] -> (pattern, macro_arguments, unexpander_arguments, hole_index)
+    | L.Hole :: rest ->
+        let argument : string = "x" ^ string_of_int hole_index in
+        let pattern_part : string list =
+          match rest with
+          | L.Hole :: _ -> [ "term:arg"; "ppSpace"; "colGt" ]
+          | _ -> [ "term:" ^ notation_priority rest ]
+        in
+        print_parts (hole_index + 1) (child_index + 1)
+          (pattern @ pattern_part)
+          (macro_arguments @ [ Printf.sprintf "⟨stx[%d]⟩" child_index ])
+          (unexpander_arguments @ [ argument ]) rest
+    | L.Literal literal :: rest ->
+        print_parts hole_index (child_index + 1)
+          (pattern @ [ quote_notation_literal (" " ^ literal ^ " ") ])
+          macro_arguments
+          (unexpander_arguments
+          @ [ "Lean.mkAtom " ^ quote_notation_literal literal ])
+          rest
+  in
+  let pattern, macro_arguments, unexpander_arguments, arity =
+    print_parts 0 0 [] [] [] parts
+  in
+  let unexpander_pattern : string =
+    String.concat " "
+      ("$f" :: List.init arity (fun index -> "$x" ^ string_of_int index))
+  in
+  let syntax_name : string =
+    "SpecTec.Notation." ^ printed_name ^ ".relationNotation"
+  in
+  String.concat "\n"
+    [ "meta def expandRelationNotation : Lean.Macro := fun stx => do";
+      "  let arguments : Array (Lean.TSyntax `term) :=";
+      "    #[" ^ String.concat ", " macro_arguments ^ "]";
+      Printf.sprintf "  return (Lean.Syntax.mkCApp ``_root_.SpecTec.%s arguments).raw"
+        printed_name;
+      "";
+      "def unexpandRelationNotation : Lean.PrettyPrinter.Unexpander";
+      "  | `(" ^ unexpander_pattern ^ ") =>";
+      Printf.sprintf "      pure (.node .none `%s" syntax_name;
+      "        #[" ^ String.concat ", " unexpander_arguments ^ "])";
+      "  | _ => throw ()";
+      "";
+      "scoped syntax:50 (name := relationNotation)";
+      "  " ^ String.concat " " pattern ^ " : term";
+      Printf.sprintf "attribute [scoped macro %s] expandRelationNotation"
+        syntax_name;
+      Printf.sprintf
+        "attribute [scoped app_unexpander _root_.SpecTec.%s] unexpandRelationNotation"
+        printed_name ]
+
+let rec has_adjacent_holes (parts : L.notation_part list) : bool =
+  match parts with
+  | L.Hole :: L.Hole :: _ -> true
+  | _ :: rest -> has_adjacent_holes rest
+  | [] -> false
+
+let print_notation (name : string) (parts : L.notation_part list) : string =
+  let printed_name : string = print_identifier name in
+  let declaration : string =
+    if has_adjacent_holes parts then print_syntax_notation printed_name parts
+    else print_simple_notation printed_name parts
+  in
+  String.concat "\n"
+    [ "namespace Notation." ^ printed_name;
+      declaration;
+      "end Notation." ^ printed_name ]
 
 let print_type_parameters (parameters : string list) : string =
   match parameters with
