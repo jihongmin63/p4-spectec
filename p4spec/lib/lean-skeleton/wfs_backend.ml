@@ -170,6 +170,41 @@ theorem Holds.rule {Atom : Type u} {program : Program Atom}
     (All.map (fun atom proof => lower_postfixed program atom proof) positive)
     failures
 
+/-- Compose a new invariant with facts already proved about the same program.
+    Negative premises retain their WFS meaning; they are not mere absence of Holds. -/
+theorem Holds.sound_with {Atom : Type u} {program : Program Atom}
+    {atom : Atom} {P Q : Interpretation Atom}
+    (proof : Holds program atom)
+    (known : ∀ other, Holds program other → Q other)
+    (closed : ∀ rule, program rule → rule.side →
+      All P rule.positive → All Q rule.positive →
+      All (Fails program) rule.negative → P rule.head) : P atom := by
+  have both : Holds program atom ∧ P atom := by
+    apply Holds.sound (interpretation := fun a => Holds program a ∧ P a) proof
+    intro rule member side positive negative
+    exact ⟨Holds.rule rule member side (All.map (fun _ h => h.1) positive) negative,
+      closed rule member side (All.map (fun _ h => h.2) positive)
+        (All.map (fun a h => known a h.1) positive) negative⟩
+  exact both.2
+
+/-- A successful judgement has an enabled rule with successful premises. -/
+theorem Holds.iff_rule {Atom : Type u} {program : Program Atom} {atom : Atom} :
+    Holds program atom ↔ ∃ rule, program rule ∧ rule.head = atom ∧ rule.side ∧
+      All (Holds program) rule.positive ∧ All (Fails program) rule.negative := by
+  constructor
+  · exact Holds.cases
+  · rintro ⟨rule, member, head, side, positive, negative⟩
+    exact head ▸ Holds.rule rule member side positive negative
+
+/-- Refute a judgement using its possible last rules, without claiming WFS falsity. -/
+theorem Holds.reject {Atom : Type u} {program : Program Atom} {atom : Atom}
+    (impossible : ∀ rule, program rule → rule.head = atom → rule.side →
+      All (Holds program) rule.positive → All (Fails program) rule.negative → False) :
+    ¬ Holds program atom := by
+  intro proof
+  obtain ⟨rule, member, head, side, positive, negative⟩ := Holds.cases proof
+  exact impossible rule member head side positive negative
+
 theorem gamma_positive {Atom : Type u} (program : Program Atom)
     (positiveProgram : ∀ rule, program rule → rule.negative = [])
     (left right : Interpretation Atom) (atom : Atom) :
