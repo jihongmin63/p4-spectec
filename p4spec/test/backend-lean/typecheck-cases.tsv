@@ -1,41 +1,750 @@
-# status<TAB>path, relative to this manifest
-# Accepted cases have fixed Program_ok output terms; rejected cases fail Program_ok.
-accept	../micro/programs/casts.p4	oracles/micro-casts.lean
-accept	../micro/programs/ctrl.p4	oracles/micro-ctrl.lean
-accept	../micro/programs/decls.p4	oracles/micro-decls.lean
-accept	../micro/programs/expr.p4	oracles/micro-expr.lean
-accept	../micro/programs/funcs.p4	oracles/micro-funcs.lean
-accept	../micro/programs/headers.p4	oracles/micro-headers.lean
-accept	../micro/programs/logic.p4	oracles/micro-logic.lean
-accept	../micro/programs/parser.p4	oracles/micro-parser.lean
-accept	../micro/programs/tables.p4	oracles/micro-tables.lean
-accept	../micro/programs/types.p4	oracles/micro-types.lean
-accept	../micro/programs/types_adv.p4	oracles/micro-types_adv.lean
-# Positive regression cases passed the Program_inst SL suite.
-accept	../../../testdata/regression/pos/issue-212.p4	oracles/regression-issue-212.lean
-accept	../../../testdata/regression/pos/issue-232.p4	oracles/regression-issue-232.lean
-accept	../../../testdata/regression/pos/issue-251.p4	oracles/regression-issue-251.lean
-accept	../../../testdata/regression/pos/placeholder.p4	oracles/regression-placeholder.lean
-# Representative cases from the p4c sample suite (1267 accepted in SL).
-accept	../../../p4c/testdata/p4_16_samples/empty.p4	oracles/p4c-empty.lean
-accept	../../../p4c/testdata/p4_16_samples/action-bind.p4	oracles/p4c-action-bind.lean
-accept	../../../p4c/testdata/p4_16_samples/basic_routing-bmv2.p4	oracles/p4c-basic_routing-bmv2.lean
-reject	../micro/programs-neg/type_mismatch.p4
-# Negative regression cases failed the Program_ok SL suite.
-reject	../../../testdata/regression/neg/issue-204.p4
-reject	../../../testdata/regression/neg/issue-207.p4
-reject	../../../testdata/regression/neg/issue-213.p4
-reject	../../../testdata/regression/neg/issue-222.p4
-reject	../../../testdata/regression/neg/issue-225.p4
-reject	../../../testdata/regression/neg/issue-227.p4
-reject	../../../testdata/regression/neg/issue-229.p4
-reject	../../../testdata/regression/neg/issue-230.p4
-reject	../../../testdata/regression/neg/issue-233.p4
-reject	../../../testdata/regression/neg/issue-236.p4
-reject	../../../testdata/regression/neg/issue-243.p4
-reject	../../../testdata/regression/neg/issue-245.p4
-reject	../../../testdata/regression/neg/issue-304.p4
-reject	../../../testdata/regression/neg/placeholder.p4
-# Representative cases from the p4c error suite (535 rejected in SL).
+# Deterministic SpecTec Program_ok outcomes and one aborting negative proof target.
+# See typecheck-audit.tsv for original expectations and 39 parser failures.
+reject	../../../p4c/testdata/p4_16_errors/accept_e.p4
+reject	../../../p4c/testdata/p4_16_errors/action-bind.p4
+reject	../../../p4c/testdata/p4_16_errors/action-bind1.p4
+reject	../../../p4c/testdata/p4_16_errors/action-bind2.p4
+reject	../../../p4c/testdata/p4_16_errors/action-bind3.p4
+accept	../../../p4c/testdata/p4_16_errors/actions-with-duplicate-control-plane-names1.p4	oracles/full/p4c/testdata/p4_16_errors/actions-with-duplicate-control-plane-names1.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_errors/annotation.p4	oracles/full/p4c/testdata/p4_16_errors/annotation.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_errors/array4.p4	oracles/full/p4c/testdata/p4_16_errors/array4.p4.lean.gz
 reject	../../../p4c/testdata/p4_16_errors/assign.p4
 reject	../../../p4c/testdata/p4_16_errors/binary_e.p4
+reject	../../../p4c/testdata/p4_16_errors/bitExtract_e.p4
+reject	../../../p4c/testdata/p4_16_errors/call-inout-parameter-with-non-lvalue-2.p4
+reject	../../../p4c/testdata/p4_16_errors/call-inout-parameter-with-non-lvalue.p4
+reject	../../../p4c/testdata/p4_16_errors/call-on-constructor-with-different-type-parameter-arity.p4
+reject	../../../p4c/testdata/p4_16_errors/call-on-extern-abstract-method-illformed-after-specialization.p4
+reject	../../../p4c/testdata/p4_16_errors/call-on-extern-function-parameter-type-illformed-after-specialization.p4
+reject	../../../p4c/testdata/p4_16_errors/call-on-extern-method-illformed-after-specialization.p4
+reject	../../../p4c/testdata/p4_16_errors/call-on-extern-method-illformed-after-type-inference.p4
+reject	../../../p4c/testdata/p4_16_errors/call-on-function-illformed-after-specialization.p4
+reject	../../../p4c/testdata/p4_16_errors/call-on-function-with-different-type-parameter-arity.p4
+reject	../../../p4c/testdata/p4_16_errors/call-table.p4
+reject	../../../p4c/testdata/p4_16_errors/call1_e.p4
+accept	../../../p4c/testdata/p4_16_errors/compound-assignment.p4	oracles/full/p4c/testdata/p4_16_errors/compound-assignment.p4.lean.gz
+reject	../../../p4c/testdata/p4_16_errors/conditional_e.p4
+reject	../../../p4c/testdata/p4_16_errors/const.p4
+reject	../../../p4c/testdata/p4_16_errors/const1_e.p4
+reject	../../../p4c/testdata/p4_16_errors/const_e.p4
+reject	../../../p4c/testdata/p4_16_errors/constructor-parameter-type-illformed-after-specialization.p4
+reject	../../../p4c/testdata/p4_16_errors/constructor-parameter-type-illformed.p4
+reject	../../../p4c/testdata/p4_16_errors/constructor-with-duplicate-parameter-names.p4
+reject	../../../p4c/testdata/p4_16_errors/constructor3_e.p4
+reject	../../../p4c/testdata/p4_16_errors/constructor_e.p4
+reject	../../../p4c/testdata/p4_16_errors/control-verify.p4
+reject	../../../p4c/testdata/p4_16_errors/decl-action-parameter-type-illformed.p4
+reject	../../../p4c/testdata/p4_16_errors/decl-constant-type-has-dont-care.p4
+reject	../../../p4c/testdata/p4_16_errors/decl-constant-with-illformed-type-after-specialization.p4
+reject	../../../p4c/testdata/p4_16_errors/decl-control-with-duplicate-parameter-names.p4
+reject	../../../p4c/testdata/p4_16_errors/decl-enum-with-duplicate-fields.p4
+reject	../../../p4c/testdata/p4_16_errors/decl-function-parameter-type-illformed.p4
+reject	../../../p4c/testdata/p4_16_errors/decl-function-with-duplicate-type-paramter-names.p4
+reject	../../../p4c/testdata/p4_16_errors/decl-instantiation-init-non-extern.p4
+reject	../../../p4c/testdata/p4_16_errors/decl-matchkind-with-duplicate-fields.p4
+reject	../../../p4c/testdata/p4_16_errors/decl-newtype-of-illformed-type.p4
+reject	../../../p4c/testdata/p4_16_errors/decl-newtype-of-type-with-dont-care.p4
+reject	../../../p4c/testdata/p4_16_errors/decl-parser-with-accept-state.p4
+reject	../../../p4c/testdata/p4_16_errors/decl-parser-with-duplicate-parameter-names.p4
+reject	../../../p4c/testdata/p4_16_errors/decl-parser-with-duplicate-state-names.p4
+reject	../../../p4c/testdata/p4_16_errors/decl-parsertype-with-duplicate-parameter-names.p4
+reject	../../../p4c/testdata/p4_16_errors/decl-serenum-of-illformed-type.p4
+reject	../../../p4c/testdata/p4_16_errors/decl-serenum-of-type-with-dont-care.p4
+reject	../../../p4c/testdata/p4_16_errors/decl-serenum-of-unsupported-type.p4
+reject	../../../p4c/testdata/p4_16_errors/decl-serenum-with-duplicate-fields.p4
+reject	../../../p4c/testdata/p4_16_errors/decl-serenum-with-non-lctk-field.p4
+reject	../../../p4c/testdata/p4_16_errors/decl-table-with-multiple-keys.p4
+reject	../../../p4c/testdata/p4_16_errors/decl-union-of-unsupported-type.p4
+reject	../../../p4c/testdata/p4_16_errors/decl-union-with-duplicate-fields.p4
+reject	../../../p4c/testdata/p4_16_errors/default-initializer-err.p4
+reject	../../../p4c/testdata/p4_16_errors/default-last-switch.p4
+reject	../../../p4c/testdata/p4_16_errors/default-param.p4
+reject	../../../p4c/testdata/p4_16_errors/default_action.p4
+reject	../../../p4c/testdata/p4_16_errors/default_action1.p4
+reject	../../../p4c/testdata/p4_16_errors/directionless.p4
+reject	../../../p4c/testdata/p4_16_errors/div.p4
+reject	../../../p4c/testdata/p4_16_errors/div0.p4
+accept	../../../p4c/testdata/p4_16_errors/div1.p4	oracles/full/p4c/testdata/p4_16_errors/div1.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_errors/div3.p4	oracles/full/p4c/testdata/p4_16_errors/div3.p4.lean.gz
+reject	../../../p4c/testdata/p4_16_errors/dup-param.p4
+reject	../../../p4c/testdata/p4_16_errors/dup-param1.p4
+reject	../../../p4c/testdata/p4_16_errors/dup-param2.p4
+reject	../../../p4c/testdata/p4_16_errors/dup-param3.p4
+reject	../../../p4c/testdata/p4_16_errors/dupConst.p4
+reject	../../../p4c/testdata/p4_16_errors/duplicate-label.p4
+reject	../../../p4c/testdata/p4_16_errors/entries-keyless.p4
+reject	../../../p4c/testdata/p4_16_errors/enumCast.p4
+reject	../../../p4c/testdata/p4_16_errors/enumcrash1.p4
+reject	../../../p4c/testdata/p4_16_errors/enumcrash2.p4
+reject	../../../p4c/testdata/p4_16_errors/equality-fail.p4
+reject	../../../p4c/testdata/p4_16_errors/equate-type-control-and-control-with-different-direction.p4
+reject	../../../p4c/testdata/p4_16_errors/equate-type-control-and-control-with-incompatible-type.p4
+reject	../../../p4c/testdata/p4_16_errors/equate-type-control-and-non-object.p4
+reject	../../../p4c/testdata/p4_16_errors/equate-type-control-and-other-object.p4
+reject	../../../p4c/testdata/p4_16_errors/equate-type-dont-care-and-non-dont-care.p4
+reject	../../../p4c/testdata/p4_16_errors/equate-type-enum-and-incompatible-type-2.p4
+reject	../../../p4c/testdata/p4_16_errors/equate-type-enum-and-incompatible-type-3.p4
+reject	../../../p4c/testdata/p4_16_errors/equate-type-enum-and-incompatible-type.p4
+reject	../../../p4c/testdata/p4_16_errors/equate-type-extern-and-extern-with-incompatible-type.p4
+reject	../../../p4c/testdata/p4_16_errors/equate-type-extern-and-non-object.p4
+reject	../../../p4c/testdata/p4_16_errors/equate-type-header-and-header-with-incompatible-type.p4
+reject	../../../p4c/testdata/p4_16_errors/equate-type-header-and-incompatible-type.p4
+reject	../../../p4c/testdata/p4_16_errors/equate-type-list-and-incompatible-type-2.p4
+reject	../../../p4c/testdata/p4_16_errors/equate-type-list-and-incompatible-type.p4
+reject	../../../p4c/testdata/p4_16_errors/equate-type-newtype-and-non-newtype.p4
+reject	../../../p4c/testdata/p4_16_errors/equate-type-package-and-non-object.p4
+reject	../../../p4c/testdata/p4_16_errors/equate-type-package-and-other-object.p4
+reject	../../../p4c/testdata/p4_16_errors/equate-type-package-and-package-with-incompatible-type.p4
+reject	../../../p4c/testdata/p4_16_errors/equate-type-parser-and-non-object.p4
+reject	../../../p4c/testdata/p4_16_errors/equate-type-parser-and-other-object.p4
+reject	../../../p4c/testdata/p4_16_errors/equate-type-parser-and-parser-with-incompatible-type.p4
+reject	../../../p4c/testdata/p4_16_errors/equate-type-serenum-and-incompatible-type.p4
+reject	../../../p4c/testdata/p4_16_errors/equate-type-specialized-and-non-specialized.p4
+reject	../../../p4c/testdata/p4_16_errors/equate-type-stack-and-incompatible-type-2.p4
+reject	../../../p4c/testdata/p4_16_errors/equate-type-stack-and-incompatible-type.p4
+reject	../../../p4c/testdata/p4_16_errors/equate-type-stack-and-stack-with-incompatible-type.p4
+reject	../../../p4c/testdata/p4_16_errors/equate-type-struct-and-non-struct.p4
+reject	../../../p4c/testdata/p4_16_errors/equate-type-struct-and-struct-with-different-name.p4
+reject	../../../p4c/testdata/p4_16_errors/equate-type-struct-and-struct-with-incompatible-type.p4
+reject	../../../p4c/testdata/p4_16_errors/equate-type-tuple-and-tuple-with-incompatible-type.p4
+reject	../../../p4c/testdata/p4_16_errors/equate-type-union-and-incompatible-type-2.p4
+reject	../../../p4c/testdata/p4_16_errors/equate-type-union-and-incompatible-type.p4
+reject	../../../p4c/testdata/p4_16_errors/equate-type-variable-and-incompatible-type-2.p4
+reject	../../../p4c/testdata/p4_16_errors/equate-type-variable-and-incompatible-type.p4
+reject	../../../p4c/testdata/p4_16_errors/explicit-cast-to-bit-from-int-of-different-width.p4
+reject	../../../p4c/testdata/p4_16_errors/explicit-cast-to-header-from-kvlist-expr-with-field-of-incompatible-type.p4
+reject	../../../p4c/testdata/p4_16_errors/explicit-cast-to-header-from-kvlist-expr-with-unmatched-field.p4
+reject	../../../p4c/testdata/p4_16_errors/explicit-cast-to-header-from-tuple-expr-with-field-of-incompatible-type.p4
+reject	../../../p4c/testdata/p4_16_errors/explicit-cast-to-incompatible-type-from-default-expr.p4
+reject	../../../p4c/testdata/p4_16_errors/explicit-cast-to-incompatible-type-from-int.p4
+reject	../../../p4c/testdata/p4_16_errors/explicit-cast-to-incompatible-type-from-invalid-expr-2.p4
+reject	../../../p4c/testdata/p4_16_errors/explicit-cast-to-incompatible-type-from-invalid-expr.p4
+reject	../../../p4c/testdata/p4_16_errors/explicit-cast-to-incompatible-type-from-kvlist-expr-2.p4
+reject	../../../p4c/testdata/p4_16_errors/explicit-cast-to-incompatible-type-from-kvlist-expr-3.p4
+reject	../../../p4c/testdata/p4_16_errors/explicit-cast-to-incompatible-type-from-kvlist-expr-4.p4
+reject	../../../p4c/testdata/p4_16_errors/explicit-cast-to-incompatible-type-from-kvlist-expr-5.p4
+reject	../../../p4c/testdata/p4_16_errors/explicit-cast-to-incompatible-type-from-kvlist-expr.p4
+reject	../../../p4c/testdata/p4_16_errors/explicit-cast-to-incompatible-type-from-tuple-expr-2.p4
+reject	../../../p4c/testdata/p4_16_errors/explicit-cast-to-incompatible-type-from-tuple-expr-4.p4
+reject	../../../p4c/testdata/p4_16_errors/explicit-cast-to-incompatible-type-from-tuple-expr.p4
+reject	../../../p4c/testdata/p4_16_errors/explicit-cast-to-int-from-bit-of-different-width.p4
+reject	../../../p4c/testdata/p4_16_errors/explicit-cast-to-list-from-tuple-expr-with-field-of-incompatible-type.p4
+reject	../../../p4c/testdata/p4_16_errors/explicit-cast-to-non-bool-from-bool.p4
+reject	../../../p4c/testdata/p4_16_errors/explicit-cast-to-stack-from-incompatible-tuple-expr.p4
+reject	../../../p4c/testdata/p4_16_errors/explicit-cast-to-stack-from-longer-kvlist-expr.p4
+reject	../../../p4c/testdata/p4_16_errors/explicit-cast-to-stack-from-tuple-expr-with-field-of-incompatible-type.p4
+reject	../../../p4c/testdata/p4_16_errors/explicit-cast-to-struct-from-kvlist-expr-with-field-of-incompatible-type.p4
+reject	../../../p4c/testdata/p4_16_errors/explicit-cast-to-struct-from-kvlist-expr-with-unmatched-field.p4
+reject	../../../p4c/testdata/p4_16_errors/explicit-cast-to-struct-from-tuple-expr-with-field-of-incompatible-type.p4
+reject	../../../p4c/testdata/p4_16_errors/explicit-cast-to-struct-from-tuple-expr-with-unmatched-field.p4
+reject	../../../p4c/testdata/p4_16_errors/explicit-cast-to-tuple-from-longer-tuple-expr-with-default.p4
+reject	../../../p4c/testdata/p4_16_errors/explicit-cast-to-tuple-from-tuple-expr-with-field-of-incompatible-type.p4
+reject	../../../p4c/testdata/p4_16_errors/expr-binary-bitwise-on-unsupported-types.p4
+reject	../../../p4c/testdata/p4_16_errors/expr-binary-compare-non-coercible-types.p4
+reject	../../../p4c/testdata/p4_16_errors/expr-binary-compare-unsupported-types.p4
+reject	../../../p4c/testdata/p4_16_errors/expr-binary-div-on-non-coercible-types.p4
+reject	../../../p4c/testdata/p4_16_errors/expr-binary-logical-on-non-coercible-types.p4
+reject	../../../p4c/testdata/p4_16_errors/expr-binary-logical-on-unsupported-types.p4
+reject	../../../p4c/testdata/p4_16_errors/expr-binary-sat-on-non-coercible-types.p4
+reject	../../../p4c/testdata/p4_16_errors/expr-binary-sat-on-unsupported-types.p4
+reject	../../../p4c/testdata/p4_16_errors/expr-binary-shift-by-negative.p4
+reject	../../../p4c/testdata/p4_16_errors/expr-binary-shift-on-unsupported-type.p4
+reject	../../../p4c/testdata/p4_16_errors/expr-bitslice-high-negative.p4
+reject	../../../p4c/testdata/p4_16_errors/expr-bitslice-high-non-lctk.p4
+reject	../../../p4c/testdata/p4_16_errors/expr-bitslice-high-unsupported-type.p4
+reject	../../../p4c/testdata/p4_16_errors/expr-bitslice-low-non-lctk.p4
+reject	../../../p4c/testdata/p4_16_errors/expr-bitslice-low-unsupported-type.p4
+reject	../../../p4c/testdata/p4_16_errors/expr-call-on-type-not-found.p4
+reject	../../../p4c/testdata/p4_16_errors/expr-call-on-type-unsupported-method.p4
+reject	../../../p4c/testdata/p4_16_errors/expr-cast-to-illformed-type.p4
+reject	../../../p4c/testdata/p4_16_errors/expr-cast-to-type-with-dont-care.p4
+reject	../../../p4c/testdata/p4_16_errors/expr-expraccess-on-header-with-no-such-field.p4
+reject	../../../p4c/testdata/p4_16_errors/expr-expraccess-on-table-apply-result-with-no-such-field.p4
+reject	../../../p4c/testdata/p4_16_errors/expr-expraccess-on-union-with-no-such-field.p4
+reject	../../../p4c/testdata/p4_16_errors/expr-expraccess-on-unsupported-type-2.p4
+reject	../../../p4c/testdata/p4_16_errors/expr-expraccess-on-unsupported-type.p4
+reject	../../../p4c/testdata/p4_16_errors/expr-indexaccess-on-unsupported-type-2.p4
+reject	../../../p4c/testdata/p4_16_errors/expr-indexaccess-on-unsupported-type-3.p4
+reject	../../../p4c/testdata/p4_16_errors/expr-indexaccess-on-unsupported-type.p4
+reject	../../../p4c/testdata/p4_16_errors/expr-indexaccess-with-negative-index.p4
+reject	../../../p4c/testdata/p4_16_errors/expr-last-access-on-non-stack-2.p4
+reject	../../../p4c/testdata/p4_16_errors/expr-last-access-on-non-stack.p4
+reject	../../../p4c/testdata/p4_16_errors/expr-lastIndex-access-on-non-stack-2.p4
+reject	../../../p4c/testdata/p4_16_errors/expr-lastIndex-access-on-non-stack.p4
+reject	../../../p4c/testdata/p4_16_errors/expr-mask-on-non-coercible-types.p4
+reject	../../../p4c/testdata/p4_16_errors/expr-mask-on-unsupported-types.p4
+reject	../../../p4c/testdata/p4_16_errors/expr-next-access-on-non-stack.p4
+reject	../../../p4c/testdata/p4_16_errors/expr-range-on-unsupported-types.p4
+reject	../../../p4c/testdata/p4_16_errors/expr-select-transition-to-non-existant-value.p4
+reject	../../../p4c/testdata/p4_16_errors/expr-select-transition-to-non-state.p4
+reject	../../../p4c/testdata/p4_16_errors/expr-select-with-expression-list-and-tuple-keyset-of-different-arity.p4
+reject	../../../p4c/testdata/p4_16_errors/expr-select-with-expression-list-and-tuple-keyset-with-field-of-incompatible-type-2.p4
+reject	../../../p4c/testdata/p4_16_errors/expr-select-with-expression-list-and-tuple-keyset-with-field-of-incompatible-type.p4
+reject	../../../p4c/testdata/p4_16_errors/expr-select-with-single-expression-and-keyset-of-incompatible-types.p4
+reject	../../../p4c/testdata/p4_16_errors/expr-select-with-single-expression-and-tuple-keyset.p4
+reject	../../../p4c/testdata/p4_16_errors/expr-ternary-with-non-coercible-branch-types.p4
+reject	../../../p4c/testdata/p4_16_errors/expr-typeaccess-on-enum-with-no-such-field.p4
+reject	../../../p4c/testdata/p4_16_errors/expr-typeaccess-on-serenum-with-no-such-field.p4
+reject	../../../p4c/testdata/p4_16_errors/expr-typeaccess-on-unsupported-type-2.p4
+reject	../../../p4c/testdata/p4_16_errors/expr-typeaccess-on-unsupported-type.p4
+reject	../../../p4c/testdata/p4_16_errors/expr-unary-logical-on-unsupported-type.p4
+reject	../../../p4c/testdata/p4_16_errors/expr-unary-minus-on-unsupported-type.p4
+reject	../../../p4c/testdata/p4_16_errors/extern-abstract-method-parameter-type-illformed.p4
+reject	../../../p4c/testdata/p4_16_errors/extern-abstract-method-parameter-type-unsupported-after-specialization.p4
+reject	../../../p4c/testdata/p4_16_errors/extern-abstract-method-parameter-type-unsupported.p4
+reject	../../../p4c/testdata/p4_16_errors/extern-abstract-method-return-type-has-dont-care.p4
+reject	../../../p4c/testdata/p4_16_errors/extern-abstract-method-with-extern-name.p4
+reject	../../../p4c/testdata/p4_16_errors/extern-method-impl-illformed.p4
+reject	../../../p4c/testdata/p4_16_errors/extern-method-impl-of-existing-abstract-method-with-different-parameter-direction.p4
+reject	../../../p4c/testdata/p4_16_errors/extern-method-impl-of-existing-abstract-method-with-different-parameter-type.p4
+reject	../../../p4c/testdata/p4_16_errors/extern-method-impl-of-existing-abstract-method-with-different-return-type.p4
+reject	../../../p4c/testdata/p4_16_errors/extern-method-impl-of-existing-non-abstract-method.p4
+reject	../../../p4c/testdata/p4_16_errors/extern-method-impl-return-type-has-dont-care.p4
+reject	../../../p4c/testdata/p4_16_errors/extern-method-impl-without-return.p4
+reject	../../../p4c/testdata/p4_16_errors/extern-method-overload-resolution-fails.p4
+reject	../../../p4c/testdata/p4_16_errors/extern.p4
+accept	../../../p4c/testdata/p4_16_errors/extract.p4	oracles/full/p4c/testdata/p4_16_errors/extract.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_errors/extract1.p4	oracles/full/p4c/testdata/p4_16_errors/extract1.p4.lean.gz
+reject	../../../p4c/testdata/p4_16_errors/factory-err2.p4
+reject	../../../p4c/testdata/p4_16_errors/function1_e.p4
+reject	../../../p4c/testdata/p4_16_errors/function_e.p4
+reject	../../../p4c/testdata/p4_16_errors/function_e1.p4
+reject	../../../p4c/testdata/p4_16_errors/function_e2.p4
+reject	../../../p4c/testdata/p4_16_errors/functors2_e.p4
+reject	../../../p4c/testdata/p4_16_errors/functors3_e.p4
+reject	../../../p4c/testdata/p4_16_errors/generic-extern-inference-abstract_e.p4
+reject	../../../p4c/testdata/p4_16_errors/generic-extern-inference-typedef_e.p4
+reject	../../../p4c/testdata/p4_16_errors/generic-extern-inference_e.p4
+reject	../../../p4c/testdata/p4_16_errors/generic-struct-self-nested.p4
+reject	../../../p4c/testdata/p4_16_errors/generic1_e.p4
+reject	../../../p4c/testdata/p4_16_errors/header2_e.p4
+reject	../../../p4c/testdata/p4_16_errors/header3.p4
+reject	../../../p4c/testdata/p4_16_errors/implicit-cast-to-header-from-kvlist-expr-with-field-of-incompatible-type.p4
+reject	../../../p4c/testdata/p4_16_errors/implicit-cast-to-header-from-kvlist-expr-with-unmatched-field.p4
+reject	../../../p4c/testdata/p4_16_errors/implicit-cast-to-header-from-tuple-expr-with-field-of-incompatible-type.p4
+reject	../../../p4c/testdata/p4_16_errors/implicit-cast-to-incompatible-type-from-default-expr.p4
+reject	../../../p4c/testdata/p4_16_errors/implicit-cast-to-incompatible-type-from-int.p4
+reject	../../../p4c/testdata/p4_16_errors/implicit-cast-to-incompatible-type-from-invalid-expr-2.p4
+reject	../../../p4c/testdata/p4_16_errors/implicit-cast-to-incompatible-type-from-invalid-expr.p4
+reject	../../../p4c/testdata/p4_16_errors/implicit-cast-to-incompatible-type-from-kvlist-expr-2.p4
+reject	../../../p4c/testdata/p4_16_errors/implicit-cast-to-incompatible-type-from-kvlist-expr-3.p4
+reject	../../../p4c/testdata/p4_16_errors/implicit-cast-to-incompatible-type-from-kvlist-expr.p4
+reject	../../../p4c/testdata/p4_16_errors/implicit-cast-to-incompatible-type-from-serenum-2.p4
+reject	../../../p4c/testdata/p4_16_errors/implicit-cast-to-incompatible-type-from-serenum.p4
+reject	../../../p4c/testdata/p4_16_errors/implicit-cast-to-incompatible-type-from-tuple-expr-with-default.p4
+reject	../../../p4c/testdata/p4_16_errors/implicit-cast-to-list-from-tuple-expr-with-field-of-incompatible-type.p4
+reject	../../../p4c/testdata/p4_16_errors/implicit-cast-to-stack-from-kvlist-expr-with-field-of-incompatible-type.p4
+reject	../../../p4c/testdata/p4_16_errors/implicit-cast-to-stack-from-tuple-expr-with-different-length.p4
+reject	../../../p4c/testdata/p4_16_errors/implicit-cast-to-struct-from-kvlist-expr-with-unmatched-field.p4
+reject	../../../p4c/testdata/p4_16_errors/implicit-cast-to-struct-from-tuple-expr-with-field-of-incompatible-type-2.p4
+reject	../../../p4c/testdata/p4_16_errors/implicit-cast-to-struct-from-tuple-expr-with-field-of-incompatible-type.p4
+reject	../../../p4c/testdata/p4_16_errors/implicit-cast-to-tuple-from-kvlist-expr-with-field-of-incompatible-type.p4
+reject	../../../p4c/testdata/p4_16_errors/implicit-cast-to-tuple-from-tuple-expr-with-field-of-incompatible-type.p4
+reject	../../../p4c/testdata/p4_16_errors/implicit.p4
+reject	../../../p4c/testdata/p4_16_errors/incorrect-label.p4
+reject	../../../p4c/testdata/p4_16_errors/init-entries-error1-bmv2.p4
+reject	../../../p4c/testdata/p4_16_errors/init-entries-error2-bmv2.p4
+reject	../../../p4c/testdata/p4_16_errors/init-entries-error3-bmv2.p4
+reject	../../../p4c/testdata/p4_16_errors/inro.p4
+reject	../../../p4c/testdata/p4_16_errors/instantiate-at-control-apply-of-unsupported-object-type.p4
+reject	../../../p4c/testdata/p4_16_errors/instantiate-at-control-block-of-unsupported-object-type.p4
+reject	../../../p4c/testdata/p4_16_errors/instantiate-at-parser-block-of-unsupported-object-type.p4
+reject	../../../p4c/testdata/p4_16_errors/instantiate-at-parser-state-of-unsupported-object-type.p4
+reject	../../../p4c/testdata/p4_16_errors/interface1_e.p4
+reject	../../../p4c/testdata/p4_16_errors/interface_e.p4
+accept	../../../p4c/testdata/p4_16_errors/issue-2123_e.p4	oracles/full/p4c/testdata/p4_16_errors/issue-2123_e.p4.lean.gz
+reject	../../../p4c/testdata/p4_16_errors/issue1006-1.p4
+reject	../../../p4c/testdata/p4_16_errors/issue1059.p4
+accept	../../../p4c/testdata/p4_16_errors/issue122.p4	oracles/full/p4c/testdata/p4_16_errors/issue122.p4.lean.gz
+reject	../../../p4c/testdata/p4_16_errors/issue1230.p4
+reject	../../../p4c/testdata/p4_16_errors/issue1296.p4
+reject	../../../p4c/testdata/p4_16_errors/issue1331.p4
+reject	../../../p4c/testdata/p4_16_errors/issue1542.p4
+reject	../../../p4c/testdata/p4_16_errors/issue1557-bmv2.p4
+accept	../../../p4c/testdata/p4_16_errors/issue1580.p4	oracles/full/p4c/testdata/p4_16_errors/issue1580.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_errors/issue1732.p4	oracles/full/p4c/testdata/p4_16_errors/issue1732.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_errors/issue1777-bmv2.p4	oracles/full/p4c/testdata/p4_16_errors/issue1777-bmv2.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_errors/issue1803_same_table_name.p4	oracles/full/p4c/testdata/p4_16_errors/issue1803_same_table_name.p4.lean.gz
+reject	../../../p4c/testdata/p4_16_errors/issue1932-1.p4
+reject	../../../p4c/testdata/p4_16_errors/issue1932-2.p4
+accept	../../../p4c/testdata/p4_16_errors/issue1932.p4	oracles/full/p4c/testdata/p4_16_errors/issue1932.p4.lean.gz
+reject	../../../p4c/testdata/p4_16_errors/issue1944.p4
+accept	../../../p4c/testdata/p4_16_errors/issue1949-bmv2.p4	oracles/full/p4c/testdata/p4_16_errors/issue1949-bmv2.p4.lean.gz
+reject	../../../p4c/testdata/p4_16_errors/issue1986-1.p4
+reject	../../../p4c/testdata/p4_16_errors/issue1986.p4
+reject	../../../p4c/testdata/p4_16_errors/issue2021.p4
+reject	../../../p4c/testdata/p4_16_errors/issue2033.p4
+reject	../../../p4c/testdata/p4_16_errors/issue2036-1.p4
+reject	../../../p4c/testdata/p4_16_errors/issue2036-2.p4
+reject	../../../p4c/testdata/p4_16_errors/issue2036.p4
+reject	../../../p4c/testdata/p4_16_errors/issue2206.p4
+reject	../../../p4c/testdata/p4_16_errors/issue2220.p4
+reject	../../../p4c/testdata/p4_16_errors/issue2230-1-bmv2.p4
+reject	../../../p4c/testdata/p4_16_errors/issue2230.p4
+reject	../../../p4c/testdata/p4_16_errors/issue2260-1.p4
+reject	../../../p4c/testdata/p4_16_errors/issue2267.p4
+accept	../../../p4c/testdata/p4_16_errors/issue2283_2-bmv2.p4	oracles/full/p4c/testdata/p4_16_errors/issue2283_2-bmv2.p4.lean.gz
+reject	../../../p4c/testdata/p4_16_errors/issue2290.p4
+reject	../../../p4c/testdata/p4_16_errors/issue2317.p4
+reject	../../../p4c/testdata/p4_16_errors/issue2332.p4
+reject	../../../p4c/testdata/p4_16_errors/issue2335.p4
+reject	../../../p4c/testdata/p4_16_errors/issue2354-1.p4
+reject	../../../p4c/testdata/p4_16_errors/issue2354.p4
+accept	../../../p4c/testdata/p4_16_errors/issue2373.p4	oracles/full/p4c/testdata/p4_16_errors/issue2373.p4.lean.gz
+reject	../../../p4c/testdata/p4_16_errors/issue2413.p4
+reject	../../../p4c/testdata/p4_16_errors/issue2441.p4
+reject	../../../p4c/testdata/p4_16_errors/issue2444-1.p4
+reject	../../../p4c/testdata/p4_16_errors/issue2454.p4
+accept	../../../p4c/testdata/p4_16_errors/issue2496.p4	oracles/full/p4c/testdata/p4_16_errors/issue2496.p4.lean.gz
+reject	../../../p4c/testdata/p4_16_errors/issue2525.p4
+reject	../../../p4c/testdata/p4_16_errors/issue2544_self_ref.p4
+accept	../../../p4c/testdata/p4_16_errors/issue2544_shadowing1.p4	oracles/full/p4c/testdata/p4_16_errors/issue2544_shadowing1.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_errors/issue2545.p4	oracles/full/p4c/testdata/p4_16_errors/issue2545.p4.lean.gz
+reject	../../../p4c/testdata/p4_16_errors/issue2597.p4
+reject	../../../p4c/testdata/p4_16_errors/issue2835-bmv2.p4
+reject	../../../p4c/testdata/p4_16_errors/issue3045-1.p4
+reject	../../../p4c/testdata/p4_16_errors/issue3045-2.p4
+reject	../../../p4c/testdata/p4_16_errors/issue3045.p4
+reject	../../../p4c/testdata/p4_16_errors/issue3057-1.p4
+reject	../../../p4c/testdata/p4_16_errors/issue306.p4
+reject	../../../p4c/testdata/p4_16_errors/issue3153.p4
+reject	../../../p4c/testdata/p4_16_errors/issue3170-1.p4
+reject	../../../p4c/testdata/p4_16_errors/issue3170.p4
+abort-reject	../../../p4c/testdata/p4_16_errors/issue3188.p4
+reject	../../../p4c/testdata/p4_16_errors/issue3197-e.p4
+reject	../../../p4c/testdata/p4_16_errors/issue3221.p4
+reject	../../../p4c/testdata/p4_16_errors/issue3246.p4
+reject	../../../p4c/testdata/p4_16_errors/issue3264.p4
+reject	../../../p4c/testdata/p4_16_errors/issue3273.p4
+reject	../../../p4c/testdata/p4_16_errors/issue3282.p4
+reject	../../../p4c/testdata/p4_16_errors/issue3291-1.p4
+accept	../../../p4c/testdata/p4_16_errors/issue3291.p4	oracles/full/p4c/testdata/p4_16_errors/issue3291.p4.lean.gz
+reject	../../../p4c/testdata/p4_16_errors/issue3293.p4
+reject	../../../p4c/testdata/p4_16_errors/issue3299.p4
+reject	../../../p4c/testdata/p4_16_errors/issue3304.p4
+reject	../../../p4c/testdata/p4_16_errors/issue3305.p4
+reject	../../../p4c/testdata/p4_16_errors/issue3316.p4
+reject	../../../p4c/testdata/p4_16_errors/issue3335.p4
+reject	../../../p4c/testdata/p4_16_errors/issue3338.p4
+reject	../../../p4c/testdata/p4_16_errors/issue3345.p4
+reject	../../../p4c/testdata/p4_16_errors/issue3346.p4
+reject	../../../p4c/testdata/p4_16_errors/issue3359.p4
+accept	../../../p4c/testdata/p4_16_errors/issue3363.p4	oracles/full/p4c/testdata/p4_16_errors/issue3363.p4.lean.gz
+reject	../../../p4c/testdata/p4_16_errors/issue3378.p4
+accept	../../../p4c/testdata/p4_16_errors/issue3430.p4	oracles/full/p4c/testdata/p4_16_errors/issue3430.p4.lean.gz
+reject	../../../p4c/testdata/p4_16_errors/issue3442.p4
+reject	../../../p4c/testdata/p4_16_errors/issue345.p4
+reject	../../../p4c/testdata/p4_16_errors/issue3522.p4
+reject	../../../p4c/testdata/p4_16_errors/issue3534.p4
+reject	../../../p4c/testdata/p4_16_errors/issue3589.p4
+reject	../../../p4c/testdata/p4_16_errors/issue3611.p4
+accept	../../../p4c/testdata/p4_16_errors/issue3613.p4	oracles/full/p4c/testdata/p4_16_errors/issue3613.p4.lean.gz
+reject	../../../p4c/testdata/p4_16_errors/issue3622.p4
+reject	../../../p4c/testdata/p4_16_errors/issue3623-2.p4
+reject	../../../p4c/testdata/p4_16_errors/issue3623-3.p4
+accept	../../../p4c/testdata/p4_16_errors/issue3644-1.p4	oracles/full/p4c/testdata/p4_16_errors/issue3644-1.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_errors/issue3644-2.p4	oracles/full/p4c/testdata/p4_16_errors/issue3644-2.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_errors/issue3644.p4	oracles/full/p4c/testdata/p4_16_errors/issue3644.p4.lean.gz
+reject	../../../p4c/testdata/p4_16_errors/issue3656.p4
+reject	../../../p4c/testdata/p4_16_errors/issue3671-2.p4
+reject	../../../p4c/testdata/p4_16_errors/issue3727.p4
+reject	../../../p4c/testdata/p4_16_errors/issue3750-1.p4
+reject	../../../p4c/testdata/p4_16_errors/issue3750.p4
+reject	../../../p4c/testdata/p4_16_errors/issue3751.p4
+reject	../../../p4c/testdata/p4_16_errors/issue3787.p4
+reject	../../../p4c/testdata/p4_16_errors/issue3808-1.p4
+reject	../../../p4c/testdata/p4_16_errors/issue3808.p4
+reject	../../../p4c/testdata/p4_16_errors/issue3813.p4
+reject	../../../p4c/testdata/p4_16_errors/issue3814.p4
+reject	../../../p4c/testdata/p4_16_errors/issue3846.p4
+reject	../../../p4c/testdata/p4_16_errors/issue3847.p4
+reject	../../../p4c/testdata/p4_16_errors/issue388.p4
+reject	../../../p4c/testdata/p4_16_errors/issue394.p4
+reject	../../../p4c/testdata/p4_16_errors/issue401.p4
+reject	../../../p4c/testdata/p4_16_errors/issue407-1.p4
+reject	../../../p4c/testdata/p4_16_errors/issue413.p4
+reject	../../../p4c/testdata/p4_16_errors/issue4136.p4
+reject	../../../p4c/testdata/p4_16_errors/issue4140.p4
+reject	../../../p4c/testdata/p4_16_errors/issue4142.p4
+accept	../../../p4c/testdata/p4_16_errors/issue4144.p4	oracles/full/p4c/testdata/p4_16_errors/issue4144.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_errors/issue4146.p4	oracles/full/p4c/testdata/p4_16_errors/issue4146.p4.lean.gz
+reject	../../../p4c/testdata/p4_16_errors/issue435.p4
+reject	../../../p4c/testdata/p4_16_errors/issue4365_no_demote_error_to_info.p4
+reject	../../../p4c/testdata/p4_16_errors/issue4365_no_demote_error_to_warning.p4
+reject	../../../p4c/testdata/p4_16_errors/issue4365_no_disable_error.p4
+accept	../../../p4c/testdata/p4_16_errors/issue473.p4	oracles/full/p4c/testdata/p4_16_errors/issue473.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_errors/issue477.p4	oracles/full/p4c/testdata/p4_16_errors/issue477.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_errors/issue478.p4	oracles/full/p4c/testdata/p4_16_errors/issue478.p4.lean.gz
+reject	../../../p4c/testdata/p4_16_errors/issue5085.p4
+reject	../../../p4c/testdata/p4_16_errors/issue5094-meta-bmv2.p4
+reject	../../../p4c/testdata/p4_16_errors/issue5094-string-bmv2.p4
+reject	../../../p4c/testdata/p4_16_errors/issue5094-type-bmv2.p4
+reject	../../../p4c/testdata/p4_16_errors/issue5253.p4
+reject	../../../p4c/testdata/p4_16_errors/issue5254_dup_switch_case_label_error.p4
+reject	../../../p4c/testdata/p4_16_errors/issue5268.p4
+accept	../../../p4c/testdata/p4_16_errors/issue5296_invalid_version.p4	oracles/full/p4c/testdata/p4_16_errors/issue5296_invalid_version.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_errors/issue5296_unknown_version.p4	oracles/full/p4c/testdata/p4_16_errors/issue5296_unknown_version.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_errors/issue532.p4	oracles/full/p4c/testdata/p4_16_errors/issue532.p4.lean.gz
+reject	../../../p4c/testdata/p4_16_errors/issue5437_action.p4
+reject	../../../p4c/testdata/p4_16_errors/issue5437_instantiation.p4
+reject	../../../p4c/testdata/p4_16_errors/issue5441.p4
+reject	../../../p4c/testdata/p4_16_errors/issue5443.p4
+reject	../../../p4c/testdata/p4_16_errors/issue561-1.p4
+accept	../../../p4c/testdata/p4_16_errors/issue5703_header_union_stack.p4	oracles/full/p4c/testdata/p4_16_errors/issue5703_header_union_stack.p4.lean.gz
+reject	../../../p4c/testdata/p4_16_errors/issue584.p4
+accept	../../../p4c/testdata/p4_16_errors/issue600.p4	oracles/full/p4c/testdata/p4_16_errors/issue600.p4.lean.gz
+reject	../../../p4c/testdata/p4_16_errors/issue67.p4
+reject	../../../p4c/testdata/p4_16_errors/issue764.p4
+reject	../../../p4c/testdata/p4_16_errors/issue774-1.p4
+reject	../../../p4c/testdata/p4_16_errors/issue774-2.p4
+reject	../../../p4c/testdata/p4_16_errors/issue803-1.p4
+reject	../../../p4c/testdata/p4_16_errors/issue807.p4
+reject	../../../p4c/testdata/p4_16_errors/issue816-1.p4
+reject	../../../p4c/testdata/p4_16_errors/issue816.p4
+reject	../../../p4c/testdata/p4_16_errors/issue818.p4
+reject	../../../p4c/testdata/p4_16_errors/issue819-1.p4
+reject	../../../p4c/testdata/p4_16_errors/issue819.p4
+accept	../../../p4c/testdata/p4_16_errors/key-name.p4	oracles/full/p4c/testdata/p4_16_errors/key-name.p4.lean.gz
+reject	../../../p4c/testdata/p4_16_errors/list-error.p4
+reject	../../../p4c/testdata/p4_16_errors/loop1-err.p4
+reject	../../../p4c/testdata/p4_16_errors/loop2-err.p4
+reject	../../../p4c/testdata/p4_16_errors/loop4-err.p4
+reject	../../../p4c/testdata/p4_16_errors/lvalue-assign-to-unsupported-type.p4
+reject	../../../p4c/testdata/p4_16_errors/lvalue-bitslice-on-non-lvalue.p4
+reject	../../../p4c/testdata/p4_16_errors/lvalue-expraccess-on-non-lvalue.p4
+reject	../../../p4c/testdata/p4_16_errors/lvalue-indexaccess-on-non-value.p4
+reject	../../../p4c/testdata/p4_16_errors/method-call-apply-not-found.p4
+reject	../../../p4c/testdata/p4_16_errors/method-call-apply-on-parser-with-no-apply.p4
+reject	../../../p4c/testdata/p4_16_errors/method-call-apply-on-unsupported-type.p4
+reject	../../../p4c/testdata/p4_16_errors/method-call-isValid-on-unsupported-type-2.p4
+reject	../../../p4c/testdata/p4_16_errors/method-call-isValid-on-unsupported-type.p4
+reject	../../../p4c/testdata/p4_16_errors/method-call-pop_front-on-non-stack-2.p4
+reject	../../../p4c/testdata/p4_16_errors/method-call-pop_front-on-non-stack.p4
+reject	../../../p4c/testdata/p4_16_errors/method-call-setValid-on-unsupported-type-2.p4
+reject	../../../p4c/testdata/p4_16_errors/method-call-setValid-on-unsupported-type.p4
+reject	../../../p4c/testdata/p4_16_errors/methodArgDontcare.p4
+reject	../../../p4c/testdata/p4_16_errors/minWidth.p4
+reject	../../../p4c/testdata/p4_16_errors/missing_actions.p4
+reject	../../../p4c/testdata/p4_16_errors/missing_match.p4
+reject	../../../p4c/testdata/p4_16_errors/module_e.p4
+accept	../../../p4c/testdata/p4_16_errors/multicast-bmv2.p4	oracles/full/p4c/testdata/p4_16_errors/multicast-bmv2.p4.lean.gz
+reject	../../../p4c/testdata/p4_16_errors/mux_e.p4
+reject	../../../p4c/testdata/p4_16_errors/name-duplicate-parameter-names.p4
+reject	../../../p4c/testdata/p4_16_errors/name-duplicate-type-parameter-names-2.p4
+reject	../../../p4c/testdata/p4_16_errors/name-duplicate-type-parameter-names.p4
+reject	../../../p4c/testdata/p4_16_errors/name-duplicate-typedef-names.p4
+reject	../../../p4c/testdata/p4_16_errors/named-fail.p4
+reject	../../../p4c/testdata/p4_16_errors/named-fail1.p4
+reject	../../../p4c/testdata/p4_16_errors/neg.p4
+reject	../../../p4c/testdata/p4_16_errors/newtype-err.p4
+reject	../../../p4c/testdata/p4_16_errors/next.p4
+reject	../../../p4c/testdata/p4_16_errors/nostart.p4
+reject	../../../p4c/testdata/p4_16_errors/not_bound.p4
+reject	../../../p4c/testdata/p4_16_errors/package.p4
+reject	../../../p4c/testdata/p4_16_errors/param.p4
+reject	../../../p4c/testdata/p4_16_errors/parameter-type-illformed.p4
+reject	../../../p4c/testdata/p4_16_errors/parameter-type-incompatible-with-default-value.p4
+reject	../../../p4c/testdata/p4_16_errors/parser-arg.p4
+reject	../../../p4c/testdata/p4_16_errors/persistent_e.p4
+reject	../../../p4c/testdata/p4_16_errors/pr2918.p4
+reject	../../../p4c/testdata/p4_16_errors/psa-meter2.p4
+reject	../../../p4c/testdata/p4_16_errors/psa-type-hdr.p4
+reject	../../../p4c/testdata/p4_16_errors/push_nonconstant.p4
+reject	../../../p4c/testdata/p4_16_errors/range_e.p4
+reject	../../../p4c/testdata/p4_16_errors/scope.p4
+reject	../../../p4c/testdata/p4_16_errors/select-struct.p4
+reject	../../../p4c/testdata/p4_16_errors/select-varbits.p4
+reject	../../../p4c/testdata/p4_16_errors/self-call.p4
+reject	../../../p4c/testdata/p4_16_errors/serEnumImplCast.p4
+reject	../../../p4c/testdata/p4_16_errors/serenum-type.p4
+reject	../../../p4c/testdata/p4_16_errors/serenum-typedef.p4
+reject	../../../p4c/testdata/p4_16_errors/shift-int-non-const.p4
+reject	../../../p4c/testdata/p4_16_errors/signed.p4
+reject	../../../p4c/testdata/p4_16_errors/signs.p4
+reject	../../../p4c/testdata/p4_16_errors/slice_out_of_bound.p4
+accept	../../../p4c/testdata/p4_16_errors/spec-ex32_e.p4	oracles/full/p4c/testdata/p4_16_errors/spec-ex32_e.p4.lean.gz
+reject	../../../p4c/testdata/p4_16_errors/spec-issue1297-string-cat-err-0.p4
+reject	../../../p4c/testdata/p4_16_errors/spec-issue1297-string-cat-err-1.p4
+accept	../../../p4c/testdata/p4_16_errors/spec-issue1297-string-cat-err-2-anno.p4	oracles/full/p4c/testdata/p4_16_errors/spec-issue1297-string-cat-err-2-anno.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_errors/spec-issue1297-string-cat-err-3-anno.p4	oracles/full/p4c/testdata/p4_16_errors/spec-issue1297-string-cat-err-3-anno.p4.lean.gz
+reject	../../../p4c/testdata/p4_16_errors/spec-issue563.p4
+reject	../../../p4c/testdata/p4_16_errors/stack-const-index-out-of-bounds-bmv2.p4
+reject	../../../p4c/testdata/p4_16_errors/stack1_e.p4
+reject	../../../p4c/testdata/p4_16_errors/stack2.p4
+reject	../../../p4c/testdata/p4_16_errors/stack3.p4
+reject	../../../p4c/testdata/p4_16_errors/stack_e.p4
+reject	../../../p4c/testdata/p4_16_errors/stmt-switch-on-action-run-with-top-level-label.p4
+reject	../../../p4c/testdata/p4_16_errors/stmt-switch-on-unsupported-type.p4
+reject	../../../p4c/testdata/p4_16_errors/stmt-switch-with-duplicate-labels.p4
+reject	../../../p4c/testdata/p4_16_errors/stmt-switch-without-default-label.p4
+reject	../../../p4c/testdata/p4_16_errors/string-e.p4
+reject	../../../p4c/testdata/p4_16_errors/string-e1.p4
+reject	../../../p4c/testdata/p4_16_errors/string-e2.p4
+reject	../../../p4c/testdata/p4_16_errors/struct_e.p4
+reject	../../../p4c/testdata/p4_16_errors/structure-valued-expr-errs-1.p4
+accept	../../../p4c/testdata/p4_16_errors/structured-annotation-e1.p4	oracles/full/p4c/testdata/p4_16_errors/structured-annotation-e1.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_errors/structured-annotation-e2.p4	oracles/full/p4c/testdata/p4_16_errors/structured-annotation-e2.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_errors/structured-annotation-e3.p4	oracles/full/p4c/testdata/p4_16_errors/structured-annotation-e3.p4.lean.gz
+reject	../../../p4c/testdata/p4_16_errors/switch_string.p4
+reject	../../../p4c/testdata/p4_16_errors/table-action-duplicate-actions.p4
+reject	../../../p4c/testdata/p4_16_errors/table-action-function-not-found.p4
+reject	../../../p4c/testdata/p4_16_errors/table-custom-property-largest_priority_wins-non-bool.p4
+reject	../../../p4c/testdata/p4_16_errors/table-custom-property-priority_delta-non-positive.p4
+reject	../../../p4c/testdata/p4_16_errors/table-custom-property-priority_delta-unsupported-type.p4
+reject	../../../p4c/testdata/p4_16_errors/table-entries-decl-order.p4
+accept	../../../p4c/testdata/p4_16_errors/table-entries-error.p4	oracles/full/p4c/testdata/p4_16_errors/table-entries-error.p4.lean.gz
+reject	../../../p4c/testdata/p4_16_errors/table-entries-exact-ternary.p4
+reject	../../../p4c/testdata/p4_16_errors/table-entries-exact.p4
+reject	../../../p4c/testdata/p4_16_errors/table-entries-lpm-2.p4
+reject	../../../p4c/testdata/p4_16_errors/table-entries-lpm.p4
+reject	../../../p4c/testdata/p4_16_errors/table-entries-optional-2-bmv2.p4
+reject	../../../p4c/testdata/p4_16_errors/table-entries-range.p4
+reject	../../../p4c/testdata/p4_16_errors/table-entries-ternary.p4
+reject	../../../p4c/testdata/p4_16_errors/table-entry-action-not-found.p4
+reject	../../../p4c/testdata/p4_16_errors/table-entry-const-with-numeric-priority.p4
+reject	../../../p4c/testdata/p4_16_errors/table-entry-default-on-exact-match.p4
+reject	../../../p4c/testdata/p4_16_errors/table-entry-keyset-and-table-key-non-coercible-types-2.p4
+reject	../../../p4c/testdata/p4_16_errors/table-entry-keyset-and-table-key-non-coercible-types-3.p4
+reject	../../../p4c/testdata/p4_16_errors/table-entry-keyset-and-table-key-non-coercible-types-4.p4
+reject	../../../p4c/testdata/p4_16_errors/table-entry-keyset-and-table-key-non-coercible-types-5.p4
+reject	../../../p4c/testdata/p4_16_errors/table-entry-keyset-and-table-key-non-coercible-types.p4
+reject	../../../p4c/testdata/p4_16_errors/table-entry-keyset-any-on-exact-match.p4
+reject	../../../p4c/testdata/p4_16_errors/table-entry-lpm-with-priority.p4
+reject	../../../p4c/testdata/p4_16_errors/table-entry-mask-on-range-match.p4
+reject	../../../p4c/testdata/p4_16_errors/table-entry-range-on-range-match.p4
+reject	../../../p4c/testdata/p4_16_errors/table-key-of-unsupported-type.p4
+reject	../../../p4c/testdata/p4_16_errors/table-key-with-match-kind-of-incompatible-type.p4
+reject	../../../p4c/testdata/p4_16_errors/table-key-with-unmatched-match-kind.p4
+reject	../../../p4c/testdata/p4_16_errors/template_e.p4
+reject	../../../p4c/testdata/p4_16_errors/tuple-newtype.p4
+reject	../../../p4c/testdata/p4_16_errors/tuple-to-header.p4
+accept	../../../p4c/testdata/p4_16_errors/twovarbit.p4	oracles/full/p4c/testdata/p4_16_errors/twovarbit.p4.lean.gz
+reject	../../../p4c/testdata/p4_16_errors/type-bit-with-negative-width.p4
+reject	../../../p4c/testdata/p4_16_errors/type-bit-with-non-lctk-width.p4
+reject	../../../p4c/testdata/p4_16_errors/type-conflicting-inferred-types.p4
+reject	../../../p4c/testdata/p4_16_errors/type-different-type-parameter-arity-after-type-inference.p4
+reject	../../../p4c/testdata/p4_16_errors/type-field.p4
+reject	../../../p4c/testdata/p4_16_errors/type-header-with-duplicate-fields.p4
+reject	../../../p4c/testdata/p4_16_errors/type-in-expr.p4
+reject	../../../p4c/testdata/p4_16_errors/type-int-with-non-lctk-width.p4
+reject	../../../p4c/testdata/p4_16_errors/type-int-with-non-natural-width.p4
+reject	../../../p4c/testdata/p4_16_errors/type-list-of-illformed-type.p4
+reject	../../../p4c/testdata/p4_16_errors/type-params_e.p4
+reject	../../../p4c/testdata/p4_16_errors/type-stack-of-unsupported-type-after-specialization.p4
+reject	../../../p4c/testdata/p4_16_errors/type-stack-with-negative-size.p4
+reject	../../../p4c/testdata/p4_16_errors/type-struct-with-duplicate-fields.p4
+reject	../../../p4c/testdata/p4_16_errors/type-tuple-of-unsupported-type.p4
+reject	../../../p4c/testdata/p4_16_errors/type-union-of-unsupported-type-after-specialization.p4
+reject	../../../p4c/testdata/p4_16_errors/type-varbit-with-negative-width.p4
+reject	../../../p4c/testdata/p4_16_errors/type-variable-not-found.p4
+reject	../../../p4c/testdata/p4_16_errors/typecheck1_e.p4
+reject	../../../p4c/testdata/p4_16_errors/typecheck_e.p4
+reject	../../../p4c/testdata/p4_16_errors/typedef-and-type-definitions.p4
+reject	../../../p4c/testdata/p4_16_errors/unknown-struct1.p4
+reject	../../../p4c/testdata/p4_16_errors/virtual1.p4
+reject	../../../p4c/testdata/p4_16_errors/virtual2.p4
+reject	../../../p4c/testdata/p4_16_errors/virtual3.p4
+reject	../../../p4c/testdata/p4_16_errors/virtual4.p4
+reject	../../../p4c/testdata/p4_16_errors/virtual5.p4
+reject	../../../p4c/testdata/p4_16_errors/virtual6.p4
+reject	../../../p4c/testdata/p4_16_errors/width1_e.p4
+reject	../../../p4c/testdata/p4_16_errors/width_e.p4
+reject	../../../p4c/testdata/p4_16_errors/wrong-cast.p4
+accept	../../../p4c/testdata/p4_16_samples/action-bind.p4	oracles/full/p4c/testdata/p4_16_samples/action-bind.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/action-synth.p4	oracles/full/p4c/testdata/p4_16_samples/action-synth.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/action-two-params.p4	oracles/full/p4c/testdata/p4_16_samples/action-two-params.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/action-uses.p4	oracles/full/p4c/testdata/p4_16_samples/action-uses.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/actionAnnotations.p4	oracles/full/p4c/testdata/p4_16_samples/actionAnnotations.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/action_call_ebpf.p4	oracles/full/p4c/testdata/p4_16_samples/action_call_ebpf.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/action_call_table_ebpf.p4	oracles/full/p4c/testdata/p4_16_samples/action_call_table_ebpf.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/action_call_ubpf.p4	oracles/full/p4c/testdata/p4_16_samples/action_call_ubpf.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/action_fwd_ubpf.p4	oracles/full/p4c/testdata/p4_16_samples/action_fwd_ubpf.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/action_param.p4	oracles/full/p4c/testdata/p4_16_samples/action_param.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/action_param1.p4	oracles/full/p4c/testdata/p4_16_samples/action_param1.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/action_profile-bmv2.p4	oracles/full/p4c/testdata/p4_16_samples/action_profile-bmv2.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/action_profile_max_group_size_annotation.p4	oracles/full/p4c/testdata/p4_16_samples/action_profile_max_group_size_annotation.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/action_profile_sum_of_members_annotation.p4	oracles/full/p4c/testdata/p4_16_samples/action_profile_sum_of_members_annotation.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/action_selector_shared-bmv2.p4	oracles/full/p4c/testdata/p4_16_samples/action_selector_shared-bmv2.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/action_selector_unused-bmv2.p4	oracles/full/p4c/testdata/p4_16_samples/action_selector_unused-bmv2.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/actions-almost-duplicate-names1.p4	oracles/full/p4c/testdata/p4_16_samples/actions-almost-duplicate-names1.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/advance_ebpf.p4	oracles/full/p4c/testdata/p4_16_samples/advance_ebpf.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/advance_ubpf.p4	oracles/full/p4c/testdata/p4_16_samples/advance_ubpf.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/after-return.p4	oracles/full/p4c/testdata/p4_16_samples/after-return.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/alias.p4	oracles/full/p4c/testdata/p4_16_samples/alias.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/annotation-bug.p4	oracles/full/p4c/testdata/p4_16_samples/annotation-bug.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/annotation-inline-propagate.p4	oracles/full/p4c/testdata/p4_16_samples/annotation-inline-propagate.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/annotation-likely.p4	oracles/full/p4c/testdata/p4_16_samples/annotation-likely.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/annotations.p4	oracles/full/p4c/testdata/p4_16_samples/annotations.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/apply-cf.p4	oracles/full/p4c/testdata/p4_16_samples/apply-cf.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/apply.p4	oracles/full/p4c/testdata/p4_16_samples/apply.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/arch1.p4	oracles/full/p4c/testdata/p4_16_samples/arch1.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/arch2.p4	oracles/full/p4c/testdata/p4_16_samples/arch2.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/arch3.p4	oracles/full/p4c/testdata/p4_16_samples/arch3.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/arith-bmv2.p4	oracles/full/p4c/testdata/p4_16_samples/arith-bmv2.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/arith-inline-bmv2.p4	oracles/full/p4c/testdata/p4_16_samples/arith-inline-bmv2.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/arith-inline-skeleton.p4	oracles/full/p4c/testdata/p4_16_samples/arith-inline-skeleton.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/arith-skeleton.p4	oracles/full/p4c/testdata/p4_16_samples/arith-skeleton.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/arith1-bmv2.p4	oracles/full/p4c/testdata/p4_16_samples/arith1-bmv2.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/arith2-bmv2.p4	oracles/full/p4c/testdata/p4_16_samples/arith2-bmv2.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/arith2-inline-bmv2.p4	oracles/full/p4c/testdata/p4_16_samples/arith2-inline-bmv2.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/arith3-bmv2.p4	oracles/full/p4c/testdata/p4_16_samples/arith3-bmv2.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/arith4-bmv2.p4	oracles/full/p4c/testdata/p4_16_samples/arith4-bmv2.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/arith5-bmv2.p4	oracles/full/p4c/testdata/p4_16_samples/arith5-bmv2.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/array-copy-bmv2.p4	oracles/full/p4c/testdata/p4_16_samples/array-copy-bmv2.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/array1.p4	oracles/full/p4c/testdata/p4_16_samples/array1.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/array3.p4	oracles/full/p4c/testdata/p4_16_samples/array3.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/array5.p4	oracles/full/p4c/testdata/p4_16_samples/array5.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/array_field.p4	oracles/full/p4c/testdata/p4_16_samples/array_field.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/array_field1.p4	oracles/full/p4c/testdata/p4_16_samples/array_field1.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/assign.p4	oracles/full/p4c/testdata/p4_16_samples/assign.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/basic2-bmv2.p4	oracles/full/p4c/testdata/p4_16_samples/basic2-bmv2.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/basic_routing-bmv2.p4	oracles/full/p4c/testdata/p4_16_samples/basic_routing-bmv2.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/bfd_offload.p4	oracles/full/p4c/testdata/p4_16_samples/bfd_offload.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/bit0-bmv2.p4	oracles/full/p4c/testdata/p4_16_samples/bit0-bmv2.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/bitExtract.p4	oracles/full/p4c/testdata/p4_16_samples/bitExtract.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/bitwise-and.p4	oracles/full/p4c/testdata/p4_16_samples/bitwise-and.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/bitwise-cast.p4	oracles/full/p4c/testdata/p4_16_samples/bitwise-cast.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/bool_cast.p4	oracles/full/p4c/testdata/p4_16_samples/bool_cast.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/bool_double_cast.p4	oracles/full/p4c/testdata/p4_16_samples/bool_double_cast.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/bool_ebpf.p4	oracles/full/p4c/testdata/p4_16_samples/bool_ebpf.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/bool_to_bit_cast.p4	oracles/full/p4c/testdata/p4_16_samples/bool_to_bit_cast.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/bvec-hdr-bmv2.p4	oracles/full/p4c/testdata/p4_16_samples/bvec-hdr-bmv2.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/bvec_union-bmv2.p4	oracles/full/p4c/testdata/p4_16_samples/bvec_union-bmv2.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/calc-ebpf.p4	oracles/full/p4c/testdata/p4_16_samples/calc-ebpf.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/call.p4	oracles/full/p4c/testdata/p4_16_samples/call.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/cases.p4	oracles/full/p4c/testdata/p4_16_samples/cases.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/cast-call.p4	oracles/full/p4c/testdata/p4_16_samples/cast-call.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/cast.p4	oracles/full/p4c/testdata/p4_16_samples/cast.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/cast_noop.p4	oracles/full/p4c/testdata/p4_16_samples/cast_noop.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/chain.p4	oracles/full/p4c/testdata/p4_16_samples/chain.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/chain1.p4	oracles/full/p4c/testdata/p4_16_samples/chain1.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/checksum-l4-bmv2.p4	oracles/full/p4c/testdata/p4_16_samples/checksum-l4-bmv2.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/checksum1-bmv2.p4	oracles/full/p4c/testdata/p4_16_samples/checksum1-bmv2.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/checksum2-bmv2.p4	oracles/full/p4c/testdata/p4_16_samples/checksum2-bmv2.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/checksum3-bmv2.p4	oracles/full/p4c/testdata/p4_16_samples/checksum3-bmv2.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/complex.p4	oracles/full/p4c/testdata/p4_16_samples/complex.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/complex1.p4	oracles/full/p4c/testdata/p4_16_samples/complex1.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/complex10.p4	oracles/full/p4c/testdata/p4_16_samples/complex10.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/complex2.p4	oracles/full/p4c/testdata/p4_16_samples/complex2.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/complex3.p4	oracles/full/p4c/testdata/p4_16_samples/complex3.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/complex4.p4	oracles/full/p4c/testdata/p4_16_samples/complex4.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/complex5.p4	oracles/full/p4c/testdata/p4_16_samples/complex5.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/complex6.p4	oracles/full/p4c/testdata/p4_16_samples/complex6.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/complex8.p4	oracles/full/p4c/testdata/p4_16_samples/complex8.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/complex9.p4	oracles/full/p4c/testdata/p4_16_samples/complex9.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/concat-bmv2.p4	oracles/full/p4c/testdata/p4_16_samples/concat-bmv2.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/concat-fold.p4	oracles/full/p4c/testdata/p4_16_samples/concat-fold.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/concat.p4	oracles/full/p4c/testdata/p4_16_samples/concat.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/const.p4	oracles/full/p4c/testdata/p4_16_samples/const.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/constStruct.p4	oracles/full/p4c/testdata/p4_16_samples/constStruct.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/constant-fold-infint.p4	oracles/full/p4c/testdata/p4_16_samples/constant-fold-infint.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/constant-in-calculation-bmv2.p4	oracles/full/p4c/testdata/p4_16_samples/constant-in-calculation-bmv2.p4.lean.gz
+reject	../../../p4c/testdata/p4_16_samples/constant_folding.p4
+accept	../../../p4c/testdata/p4_16_samples/constants.p4	oracles/full/p4c/testdata/p4_16_samples/constants.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/constructor_cast.p4	oracles/full/p4c/testdata/p4_16_samples/constructor_cast.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/constsigned.p4	oracles/full/p4c/testdata/p4_16_samples/constsigned.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/control-as-param.p4	oracles/full/p4c/testdata/p4_16_samples/control-as-param.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/control-hs-index-test1.p4	oracles/full/p4c/testdata/p4_16_samples/control-hs-index-test1.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/control-hs-index-test2.p4	oracles/full/p4c/testdata/p4_16_samples/control-hs-index-test2.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/control-hs-index-test3.p4	oracles/full/p4c/testdata/p4_16_samples/control-hs-index-test3.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/control-hs-index-test4.p4	oracles/full/p4c/testdata/p4_16_samples/control-hs-index-test4.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/control-hs-index-test5.p4	oracles/full/p4c/testdata/p4_16_samples/control-hs-index-test5.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/control-hs-index-test6.p4	oracles/full/p4c/testdata/p4_16_samples/control-hs-index-test6.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/copy.p4	oracles/full/p4c/testdata/p4_16_samples/copy.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/copyprop1.p4	oracles/full/p4c/testdata/p4_16_samples/copyprop1.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/copyprop2.p4	oracles/full/p4c/testdata/p4_16_samples/copyprop2.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/count_add_ebpf.p4	oracles/full/p4c/testdata/p4_16_samples/count_add_ebpf.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/count_ebpf.p4	oracles/full/p4c/testdata/p4_16_samples/count_ebpf.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/crash-typechecker.p4	oracles/full/p4c/testdata/p4_16_samples/crash-typechecker.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/crc32-bmv2.p4	oracles/full/p4c/testdata/p4_16_samples/crc32-bmv2.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/csum_ubpf.p4	oracles/full/p4c/testdata/p4_16_samples/csum_ubpf.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/custom-type-restricted-fields.p4	oracles/full/p4c/testdata/p4_16_samples/custom-type-restricted-fields.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/dash/dash-pipeline-pna-dpdk.p4	oracles/full/p4c/testdata/p4_16_samples/dash/dash-pipeline-pna-dpdk.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/dash/dash-pipeline-v1model-bmv2.p4	oracles/full/p4c/testdata/p4_16_samples/dash/dash-pipeline-v1model-bmv2.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/decl.p4	oracles/full/p4c/testdata/p4_16_samples/decl.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/decl2.p4	oracles/full/p4c/testdata/p4_16_samples/decl2.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/def-use.p4	oracles/full/p4c/testdata/p4_16_samples/def-use.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/default-action-arg-bmv2.p4	oracles/full/p4c/testdata/p4_16_samples/default-action-arg-bmv2.p4.lean.gz
+reject	../../../p4c/testdata/p4_16_samples/default-control-argument.p4
+accept	../../../p4c/testdata/p4_16_samples/default-initializer.p4	oracles/full/p4c/testdata/p4_16_samples/default-initializer.p4.lean.gz
+reject	../../../p4c/testdata/p4_16_samples/default-package-argument.p4
+accept	../../../p4c/testdata/p4_16_samples/default-switch.p4	oracles/full/p4c/testdata/p4_16_samples/default-switch.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/default.p4	oracles/full/p4c/testdata/p4_16_samples/default.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/default2.p4	oracles/full/p4c/testdata/p4_16_samples/default2.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/default_action-bmv2.p4	oracles/full/p4c/testdata/p4_16_samples/default_action-bmv2.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/default_action_ubpf.p4	oracles/full/p4c/testdata/p4_16_samples/default_action_ubpf.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/deletekey.p4	oracles/full/p4c/testdata/p4_16_samples/deletekey.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/direct-action.p4	oracles/full/p4c/testdata/p4_16_samples/direct-action.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/direct-action1.p4	oracles/full/p4c/testdata/p4_16_samples/direct-action1.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/direct-call.p4	oracles/full/p4c/testdata/p4_16_samples/direct-call.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/direct-call1.p4	oracles/full/p4c/testdata/p4_16_samples/direct-call1.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/direct-call2.p4	oracles/full/p4c/testdata/p4_16_samples/direct-call2.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/drop-bmv2.p4	oracles/full/p4c/testdata/p4_16_samples/drop-bmv2.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/duplicateMethod.p4	oracles/full/p4c/testdata/p4_16_samples/duplicateMethod.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/ebpf_checksum_extern.p4	oracles/full/p4c/testdata/p4_16_samples/ebpf_checksum_extern.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/ebpf_conntrack_extern.p4	oracles/full/p4c/testdata/p4_16_samples/ebpf_conntrack_extern.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/ebpf_headers.p4	oracles/full/p4c/testdata/p4_16_samples/ebpf_headers.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/elimActRun1.p4	oracles/full/p4c/testdata/p4_16_samples/elimActRun1.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/elimActRun2.p4	oracles/full/p4c/testdata/p4_16_samples/elimActRun2.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/empty-bmv2.p4	oracles/full/p4c/testdata/p4_16_samples/empty-bmv2.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/empty.p4	oracles/full/p4c/testdata/p4_16_samples/empty.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/emptyTuple.p4	oracles/full/p4c/testdata/p4_16_samples/emptyTuple.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/entries-empty-keyless.p4	oracles/full/p4c/testdata/p4_16_samples/entries-empty-keyless.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/entries-prio.p4	oracles/full/p4c/testdata/p4_16_samples/entries-prio.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/enum-bmv2.p4	oracles/full/p4c/testdata/p4_16_samples/enum-bmv2.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/enum-folding.p4	oracles/full/p4c/testdata/p4_16_samples/enum-folding.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/enum.p4	oracles/full/p4c/testdata/p4_16_samples/enum.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/enumCast.p4	oracles/full/p4c/testdata/p4_16_samples/enumCast.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/equality-bmv2.p4	oracles/full/p4c/testdata/p4_16_samples/equality-bmv2.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/equality-varbit-bmv2.p4	oracles/full/p4c/testdata/p4_16_samples/equality-varbit-bmv2.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/equality.p4	oracles/full/p4c/testdata/p4_16_samples/equality.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/ex1.p4	oracles/full/p4c/testdata/p4_16_samples/ex1.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/exit1.p4	oracles/full/p4c/testdata/p4_16_samples/exit1.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/exit2.p4	oracles/full/p4c/testdata/p4_16_samples/exit2.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/exit3.p4	oracles/full/p4c/testdata/p4_16_samples/exit3.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/exit4.p4	oracles/full/p4c/testdata/p4_16_samples/exit4.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/exit5.p4	oracles/full/p4c/testdata/p4_16_samples/exit5.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/expression.p4	oracles/full/p4c/testdata/p4_16_samples/expression.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/extern-funcs-bmv2.p4	oracles/full/p4c/testdata/p4_16_samples/extern-funcs-bmv2.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/extern-inst-as-param.p4	oracles/full/p4c/testdata/p4_16_samples/extern-inst-as-param.p4.lean.gz
+reject	../../../p4c/testdata/p4_16_samples/extern-int-arg1.p4
+accept	../../../p4c/testdata/p4_16_samples/extern.p4	oracles/full/p4c/testdata/p4_16_samples/extern.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/extern2.p4	oracles/full/p4c/testdata/p4_16_samples/extern2.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/extern3.p4	oracles/full/p4c/testdata/p4_16_samples/extern3.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/extract_for_header_union.p4	oracles/full/p4c/testdata/p4_16_samples/extract_for_header_union.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/fabric_20190420/fabric.p4	oracles/full/p4c/testdata/p4_16_samples/fabric_20190420/fabric.p4.lean.gz
+reject	../../../p4c/testdata/p4_16_samples/factory1.p4
+reject	../../../p4c/testdata/p4_16_samples/factory2.p4
+accept	../../../p4c/testdata/p4_16_samples/filter.p4	oracles/full/p4c/testdata/p4_16_samples/filter.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/flag_lost-bmv2.p4	oracles/full/p4c/testdata/p4_16_samples/flag_lost-bmv2.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/flowlet_switching-bmv2.p4	oracles/full/p4c/testdata/p4_16_samples/flowlet_switching-bmv2.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/fold_match.p4	oracles/full/p4c/testdata/p4_16_samples/fold_match.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/forloop-bmv2.p4	oracles/full/p4c/testdata/p4_16_samples/forloop-bmv2.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/forloop1.p4	oracles/full/p4c/testdata/p4_16_samples/forloop1.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/forloop10.p4	oracles/full/p4c/testdata/p4_16_samples/forloop10.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/forloop11.p4	oracles/full/p4c/testdata/p4_16_samples/forloop11.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/forloop12.p4	oracles/full/p4c/testdata/p4_16_samples/forloop12.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/forloop2.p4	oracles/full/p4c/testdata/p4_16_samples/forloop2.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/forloop3.p4	oracles/full/p4c/testdata/p4_16_samples/forloop3.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/forloop4.p4	oracles/full/p4c/testdata/p4_16_samples/forloop4.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/forloop5.p4	oracles/full/p4c/testdata/p4_16_samples/forloop5.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/forloop5a.p4	oracles/full/p4c/testdata/p4_16_samples/forloop5a.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/forloop6.p4	oracles/full/p4c/testdata/p4_16_samples/forloop6.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/forloop7.p4	oracles/full/p4c/testdata/p4_16_samples/forloop7.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/forloop8.p4	oracles/full/p4c/testdata/p4_16_samples/forloop8.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/forloop9.p4	oracles/full/p4c/testdata/p4_16_samples/forloop9.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/free-form-annotation.p4	oracles/full/p4c/testdata/p4_16_samples/free-form-annotation.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/function.p4	oracles/full/p4c/testdata/p4_16_samples/function.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/functors.p4	oracles/full/p4c/testdata/p4_16_samples/functors.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/functors1.p4	oracles/full/p4c/testdata/p4_16_samples/functors1.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/functors2.p4	oracles/full/p4c/testdata/p4_16_samples/functors2.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/functors3.p4	oracles/full/p4c/testdata/p4_16_samples/functors3.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/functors4.p4	oracles/full/p4c/testdata/p4_16_samples/functors4.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/functors5.p4	oracles/full/p4c/testdata/p4_16_samples/functors5.p4.lean.gz
+reject	../../../p4c/testdata/p4_16_samples/functors6.p4
+reject	../../../p4c/testdata/p4_16_samples/functors7.p4
+reject	../../../p4c/testdata/p4_16_samples/functors8.p4
+reject	../../../p4c/testdata/p4_16_samples/functors9.p4
+accept	../../../p4c/testdata/p4_16_samples/fwd-bmv2-psa.p4	oracles/full/p4c/testdata/p4_16_samples/fwd-bmv2-psa.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/gauntlet_action_mux-bmv2.p4	oracles/full/p4c/testdata/p4_16_samples/gauntlet_action_mux-bmv2.p4.lean.gz
+accept	../../../p4c/testdata/p4_16_samples/gauntlet_action_return-bmv2.p4	oracles/full/p4c/testdata/p4_16_samples/gauntlet_action_return-bmv2.p4.lean.gz
