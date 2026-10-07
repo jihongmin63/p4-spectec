@@ -33,14 +33,19 @@ deriving DecidableEq, Repr
 structure Supply where
   path : List Nat
   used : List FreshId
+  rendered : List (FreshId × String) := []
   protectedNames : List String
 deriving Repr
 
 def Supply.root (protectedNames : List String) : Supply :=
-  { path := [], used := [], protectedNames }
+  { path := [], used := [], rendered := [], protectedNames }
 
 def Supply.enter (position : Nat) (supply : Supply) : Supply :=
   { supply with path := supply.path ++ [position] }
+
+/-- Return from a dynamic call without discarding its committed allocations. -/
+def Supply.leave (entry result : Supply) : Supply :=
+  { result with path := entry.path }
 
 def Supply.nextId (site : Site) (supply : Supply) : FreshId :=
   { site, path := supply.path, occurrence := supply.used.length }
@@ -48,6 +53,77 @@ def Supply.nextId (site : Site) (supply : Supply) : FreshId :=
 def Supply.allocate (site : Site) (supply : Supply) : FreshName × Supply :=
   let fresh := supply.nextId site
   (.allocated fresh, { supply with used := fresh :: supply.used })
+
+/-- Record the concrete spelling selected for a new nominal identity. -/
+def Supply.record (site : Site) (supply : Supply) (output : String) : Supply :=
+  let fresh := supply.nextId site
+  { supply with
+    used := fresh :: supply.used
+    rendered := (fresh, output) :: supply.rendered }
+
+/-- Record another spelling derived from an already allocated identity. -/
+def Supply.recordDerived (supply : Supply) (fresh : FreshId)
+    (output : String) : Supply :=
+  { supply with rendered := (fresh, output) :: supply.rendered }
+
+/-- Allocation is globally fresh for this execution and avoids every ordinary
+    name collected at the public entry point. -/
+inductive Allocates (site : Site) (before : Supply) (output : String) :
+    Supply → Prop where
+  | record
+      (notProtected : output ∉ before.protectedNames)
+      (notRendered : ∀ entry ∈ before.rendered, entry.2 ≠ output) :
+      Allocates site before output (before.record site output)
+
+theorem Allocates.output_ne_protected {site before output after}
+    (proof : Allocates site before output after) {ordinary : String}
+    (member : ordinary ∈ before.protectedNames) : output ≠ ordinary := by
+  cases proof with
+  | record notProtected _ =>
+      intro equal
+      subst ordinary
+      exact notProtected member
+
+theorem Allocates.output_ne_existing {site before output after}
+    (proof : Allocates site before output after) {fresh : FreshId}
+    {existing : String} (member : (fresh, existing) ∈ before.rendered) :
+    output ≠ existing := by
+  cases proof with
+  | record _ notRendered =>
+      intro equal
+      exact notRendered (fresh, existing) member equal.symm
+
+theorem Allocates.recorded {site before output after}
+    (proof : Allocates site before output after) :
+    (before.nextId site, output) ∈ after.rendered := by
+  cases proof
+  simp [Supply.record]
+
+/-- A rendering-sensitive constructor may add a spelling only when it is
+    linked to an existing identity and preserves the same collision boundary. -/
+inductive Derives (before : Supply) (source output : String) : Supply → Prop where
+  | record (fresh : FreshId)
+      (sourceRecorded : (fresh, source) ∈ before.rendered)
+      (notProtected : output ∉ before.protectedNames)
+      (notRendered : ∀ entry ∈ before.rendered, entry.2 ≠ output) :
+      Derives before source output (before.recordDerived fresh output)
+
+theorem Derives.output_ne_protected {before source output after}
+    (proof : Derives before source output after) {ordinary : String}
+    (member : ordinary ∈ before.protectedNames) : output ≠ ordinary := by
+  cases proof with
+  | record _ _ notProtected _ =>
+      intro equal
+      subst ordinary
+      exact notProtected member
+
+theorem Derives.same_identity {before source output after}
+    (proof : Derives before source output after) :
+    ∃ fresh, (fresh, source) ∈ before.rendered ∧
+      (fresh, output) ∈ after.rendered := by
+  cases proof with
+  | record fresh sourceRecorded _ _ =>
+      exact ⟨fresh, sourceRecorded, by simp [Supply.recordDerived]⟩
 
 theorem Supply.allocate_name (site : Site) (supply : Supply) :
     (supply.allocate site).1 = .allocated (supply.nextId site) := by
@@ -106,7 +182,8 @@ theorem AllocatedAt.toAllocated {site : Site} {path : List Nat}
   exact ⟨supply, rendering, { site, path, occurrence }, used, outputEqual⟩
 
 def singletonSupply (site : Site) (path : List Nat) (occurrence : Nat) : Supply :=
-  { path, used := [{ site, path, occurrence }], protectedNames := [] }
+  { path, used := [{ site, path, occurrence }], rendered := [],
+    protectedNames := [] }
 
 def singletonRendering (site : Site) (path : List Nat) (occurrence : Nat)
     (output : String) : Rendering (singletonSupply site path occurrence) where
@@ -210,6 +287,13 @@ structure CompatibleObservation (observation : Observation)
   preserves : Prop
 
 end SpecTecFresh
+
+namespace SpecTec
+
+abbrev FreshSupply := _root_.SpecTecFresh.Supply
+abbrev FreshSite := _root_.SpecTecFresh.Site
+
+end SpecTec
 |lean}
 
 let target_name = function L.Global name -> Some name | L.Local _ -> None
@@ -311,6 +395,14 @@ let add_variables tainted term =
   StringSet.union tainted (term_variables term)
 
 let propagate_prop tainted = function
+  | L.Predicate (L.Native
+      (("SpecTecFresh.Allocates" | "_root_.SpecTecFresh.Allocates"),
+       [ _site; _before; output; _after ])) ->
+      add_variables tainted output
+  | L.Predicate (L.Native
+      (("SpecTecFresh.Derives" | "_root_.SpecTecFresh.Derives"),
+       [ _before; _source; output; _after ])) ->
+      add_variables tainted output
   | L.Comparison (L.Eq, left, right) ->
       let left_tainted = not (StringSet.is_empty
         (StringSet.inter tainted (term_variables left))) in
@@ -375,6 +467,12 @@ let unsafe_prop tainted proposition =
   | None -> List.find_map unsafe (Traversal.prop_terms proposition)
 
 let audit_rule table summaries relation (rule : L.rule) =
+  let derives_output output = function
+    | L.Prop (L.Predicate (L.Native
+        (("SpecTecFresh.Derives" | "_root_.SpecTecFresh.Derives"),
+         [ _before; _source; derived; _after ]))) ->
+        derived = output
+    | _ -> false in
   let rec premises tainted position = function
     | [] ->
         List.find_map (unsafe_term tainted) rule.conclusion.arguments
@@ -385,6 +483,12 @@ let audit_rule table summaries relation (rule : L.rule) =
           | L.Holds application | L.NotHolds (application, _)
           | L.NotExists (_, application, _) ->
               (match unsafe_application tainted application with
+              | Some _ when target_name application.target = Some "$concat_text"
+                  && List.exists (fun output ->
+                    match rest with
+                    | certificate :: _ -> derives_output output certificate
+                    | [] -> false) (application_outputs table application) ->
+                  None
               | Some _ as found -> found
               | None -> List.find_map (unsafe_term tainted) application.arguments)
         in

@@ -56,18 +56,34 @@ example : ¬ Observation.supportedNominally .concatenation := by
   intro proof
   exact proof
 
+private def pairRoot : Supply := Supply.root []
+
+private def pairAfterA : Supply :=
+  Supply.record siteA pairRoot "nominal-A"
+
+private def pairAfterB : Supply :=
+  Supply.record siteB pairAfterA "nominal-B"
+
 private theorem siteA_text :
-    AllocatedAt siteA [] "nominal-A" :=
-  allocatedAt_of_text siteA [] 0 "nominal-A"
+    Allocates siteA pairRoot "nominal-A" pairAfterA := by
+  exact Allocates.record (by decide) (by decide)
 
 private theorem siteB_text :
-    AllocatedAt siteB [] "nominal-B" :=
-  allocatedAt_of_text siteB [] 0 "nominal-B"
+    Allocates siteB pairAfterA "nominal-B" pairAfterB := by
+  exact Allocates.record (by decide) (by decide)
+
+private theorem pair_supply_selected :
+    «$nominal_pair:supply».evalSelected pairRoot
+      (("nominal-A", "nominal-B"), pairAfterB) := by
+  constructor
+  · trivial
+  · exact ⟨pairRoot, "nominal-A", "nominal-B", pairAfterA, pairAfterB,
+      rfl, rfl, siteA_text, siteB_text, trivial⟩
 
 example : «$nominal_pair».evalSelected () ("nominal-A", "nominal-B") := by
   constructor
   · trivial
-  · exact ⟨"nominal-A", "nominal-B", rfl, rfl,
-      siteA_text, siteB_text, trivial⟩
+  · exact ⟨pairAfterB, ("nominal-A", "nominal-B"), rfl, rfl,
+      pair_supply_selected, trivial⟩
 
 end SpecTec

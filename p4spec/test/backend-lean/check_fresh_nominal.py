@@ -30,7 +30,8 @@ def main() -> None:
     assert "inductive FreshName" in generated
     assert "structure Supply" in generated
     assert "def «$nominal_pair».freshSites" in generated
-    assert "SpecTecFresh.AllocatedAt" in generated
+    assert "SpecTecFresh.Allocates" in generated
+    assert "$nominal_pair:supply" in generated
     assert "fresh:counter" not in generated
     assert "$fresh_typeId:state" not in generated
     assert '"FRESH__" ++' not in generated

@@ -1,0 +1,36 @@
+syntax typeId = text
+syntax p4program = INPUT typeId
+syntax p4programIR = OUTPUT typeId typeId typeId
+syntax context = CONTEXT typeId
+
+builtin dec $fresh_typeId() : typeId
+
+var h : text
+var ts : text*
+
+dec $concat_text(text*) : text
+def $concat_text(eps) = ""
+def $concat_text(h :: ts) = h ++ $concat_text(ts)
+
+var ordinary : typeId
+var first : typeId
+var second : typeId
+var composite : typeId
+
+relation Program_ok:
+  p4program |- p4programIR
+  hint(input %0)
+
+rule Program_ok/pair:
+  INPUT ordinary |- OUTPUT first second composite
+  -- if first = $fresh_typeId()
+  -- if second = $fresh_typeId()
+  -- if composite = $concat_text([ ordinary, "_", second ])
+
+relation Context_ok:
+  context |- typeId
+  hint(input %0)
+
+rule Context_ok/fresh:
+  CONTEXT ordinary |- first
+  -- if first = $fresh_typeId()

@@ -30,6 +30,9 @@ let transpile ?(mode = RelationLocal) (input : S.spec) :
   let fresh_counter = mode <> RelationLocal in
   let fresh_rollback = mode = FreshRollback in
   let* lean_ast = Translator.translate ~fresh_counter ~fresh_rollback input in
+  let lean_ast = match mode with
+    | RelationLocal -> Fresh_supply_lower.lower lean_ast
+    | FreshExactCounter | FreshRollback -> lean_ast in
   let* ordered = Order.order lean_ast in
   print ~mode ordered
 
@@ -37,9 +40,12 @@ let transpile_all ?(mode = RelationLocal) (input : S.spec) : string * Diagnostic
   let fresh_counter = mode <> RelationLocal in
   let fresh_rollback = mode = FreshRollback in
   let (lean_ast, diagnostics) :
-      Ast.Lean.located_declaration list * Diagnostic.t list =
+    Ast.Lean.located_declaration list * Diagnostic.t list =
     Translator.translate_all ~fresh_counter ~fresh_rollback input
   in
+  let lean_ast = match mode with
+    | RelationLocal -> Fresh_supply_lower.lower lean_ast
+    | FreshExactCounter | FreshRollback -> lean_ast in
   let (ordered, ordering_diagnostics) :
       Ast.Lean.program * Diagnostic.t list = Order.order_all lean_ast
   in

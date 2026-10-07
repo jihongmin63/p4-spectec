@@ -134,7 +134,7 @@ let collect (types : L.declaration StringMap.t) (normalize : L.type_ref -> L.typ
           | Some (L.Structure { fields; _ }) ->
               Some (Structure (List.map (fun (name, typ) -> name, normalize typ) fields))
           | _ -> None)
-      | L.TypeParameter name -> unsupported ("FreshAlpha: unbound type parameter " ^ name)
+      | L.TypeParameter _ -> None
       | _ -> None in
     match kind with
     | None -> shapes
@@ -234,6 +234,91 @@ let render_shape shapes shape ~identity =
     "def " ^ identifier shape.name ^ " (ρ : _root_.String → _root_.String) (value : "
     ^ print_type shape.typ ^ ") : " ^ print_type shape.typ ^ " :=\n  "
     ^ branches shapes shape ~identity ^ termination
+
+let protect_name (shape : shape) =
+  "FreshProtect_" ^ String.sub shape.name (String.length "FreshRename_")
+    (String.length shape.name - String.length "FreshRename_")
+
+let protect shapes typ value =
+  match typ, find_shape shapes typ with
+  | L.BuiltinType ("String", []), _ -> "[" ^ value ^ "]"
+  | _, Some shape -> "(" ^ identifier (protect_name shape) ^ " " ^ value ^ ")"
+  | _ -> "[]"
+
+let append_protected values = match values with
+  | [] -> "[]"
+  | [ value ] -> value
+  | values -> "(" ^ String.concat " ++ " values ^ ")"
+
+let protect_branches shapes shape =
+  let branch pattern fields =
+    "  | " ^ pattern ^ " => "
+    ^ append_protected
+        (List.map (fun (typ, value) -> protect shapes typ value) fields) in
+  match shape.kind with
+  | Datatype [] -> "nomatch value"
+  | Datatype constructors ->
+      "match value with\n" ^ String.concat "\n" (List.map (fun (c : L.constructor) ->
+        let fields = values "x" c.arguments in
+        branch ("." ^ identifier c.name
+          ^ String.concat "" (List.map (fun (_, value) -> " " ^ value) fields))
+          fields) constructors)
+  | Structure fields ->
+      let fields = values "x" (List.map snd fields) in
+      "match value with\n" ^ branch
+        ("⟨" ^ String.concat ", " (List.map snd fields) ^ "⟩") fields
+  | ListShape element ->
+      "match value with\n" ^ branch "[]" [] ^ "\n"
+      ^ branch "head :: tail" [ element, "head"; shape.typ, "tail" ]
+  | OptionShape element ->
+      "match value with\n" ^ branch "_root_.Option.none" [] ^ "\n"
+      ^ branch "_root_.Option.some item" [ element, "item" ]
+  | TupleShape elements ->
+      let fields = values "x" elements in
+      "match value with\n" ^ branch (tuple_pattern "x" elements) fields
+
+let render_protect_shape shapes shape =
+  let termination =
+    if is_recursive shapes shape then "\ntermination_by structural value" else "" in
+  "def " ^ identifier (protect_name shape) ^ " (value : "
+  ^ print_type shape.typ ^ ") : _root_.List _root_.String :=\n  "
+  ^ protect_branches shapes shape ^ termination
+
+let protected_name relation =
+  "FreshProtectedRelation_" ^ Digest.to_hex (Digest.string relation)
+
+type protected_root = {
+  relation : string;
+  type_parameters : string list;
+  inputs : (string * L.type_ref) list;
+}
+
+let protected_roots (program : L.program) =
+  program |> List.concat_map declarations |> List.filter_map (function
+    | L.Relation { name; type_parameters; argument_types; input_positions;
+                   rules; _ }
+      when List.exists (fun (rule : L.rule) ->
+        rule.name = "from_root_supply") rules ->
+        let positions = Option.value input_positions
+          ~default:(List.init (max 0 (List.length argument_types - 1)) Fun.id) in
+        let inputs = argument_types |> List.filteri (fun position _ ->
+          List.mem position positions) |> List.mapi (fun index typ ->
+            "arg" ^ string_of_int index, typ) in
+        Some { relation = name; type_parameters; inputs }
+    | _ -> None)
+
+let render_protected_root shapes root =
+  let parameters = List.map (fun name ->
+    "{" ^ identifier name ^ " : Type}") root.type_parameters in
+  let inputs = List.map (fun (name, typ) ->
+    "(" ^ identifier name ^ " : " ^ print_type typ ^ ")") root.inputs in
+  let binders = match parameters @ inputs with
+    | [] -> ""
+    | values -> " " ^ String.concat " " values in
+  let body = root.inputs |> List.map (fun (name, typ) ->
+    protect shapes typ (identifier name)) |> append_protected in
+  "def " ^ identifier (protected_name root.relation) ^ binders
+  ^ " : _root_.List _root_.String :=\n  " ^ body
 
 let name_helpers = {lean|
 def FreshNameBijective.{freshAlphaU,freshAlphaV} {α : Sort freshAlphaU} {β : Sort freshAlphaV} (f : α → β) : Prop :=
@@ -356,10 +441,19 @@ let render ?(nominal = false) (program : L.program) : string =
   let types = program |> List.concat_map declarations |> List.filter_map (fun declaration ->
     Option.map (fun name -> name, declaration) (data_name declaration))
     |> List.to_seq |> StringMap.of_seq in
-  if not (StringMap.mem "p4programIR" types) then "" else
   let normalize = normalize types in
-  let root = normalize (L.Name "p4programIR") in
-  let shapes = collect types normalize root in
+  let root = Option.map (fun _ -> normalize (L.Name "p4programIR"))
+    (StringMap.find_opt "p4programIR" types) in
+  let source_root = Option.map (fun _ -> normalize (L.Name "p4program"))
+    (StringMap.find_opt "p4program" types) in
+  let protected_roots = protected_roots program in
+  if root = None && protected_roots = [] then "" else
+  let protected_types = protected_roots
+    |> List.concat_map (fun protected -> List.map snd protected.inputs) in
+  let shapes = (match root with None -> [] | Some typ -> collect types normalize typ)
+    @ (match source_root with None -> [] | Some source -> collect types normalize source)
+    @ List.concat_map (collect types normalize) protected_types
+    |> List.sort_uniq (fun left right -> compare left.typ right.typ) in
   (* Extern dependencies inside fixed relation references still require the type
      family instance to state the generated function's signature. *)
   let seen_extern_dependencies = ref [] in
@@ -380,17 +474,37 @@ let render ?(nominal = false) (program : L.program) : string =
       | L.BuiltinType (_, args) | L.TupleType args -> List.exists has_extern args
       | L.RelationType (args, result) -> List.exists has_extern (result :: args)
       | L.TypeParameter _ -> false) in
-  let functions identity = if shapes = [] then "" else
+  let functions identity = if root = None || shapes = [] then "" else
     "mutual\n\n" ^ String.concat "\n\n" (List.map (fun shape -> render_shape shapes shape ~identity) shapes) ^ "\n\nend\n\n" in
-  let root_wrapper = match find_shape shapes root with
-    | Some shape when shape.name = "FreshRename_p4programIR" -> ""
-    | _ ->
+  let protect_functions = if shapes = [] then "" else
+    "mutual\n\n" ^ String.concat "\n\n"
+      (List.map (render_protect_shape shapes) shapes) ^ "\n\nend\n\n" in
+  let protected_relations = protected_roots
+    |> List.map (render_protected_root shapes) |> String.concat "\n\n" in
+  let protected_relations = if protected_relations = "" then "" else
+    protected_relations ^ "\n\n" in
+  let root_wrapper = match root with
+    | None -> ""
+    | Some root -> (match find_shape shapes root with
+      | Some shape when shape.name = "FreshRename_p4programIR" -> ""
+      | _ ->
         "def FreshRename_p4programIR (ρ : _root_.String → _root_.String) (value : p4programIR) : p4programIR :=\n  "
         ^ rename shapes root "value" ^ "\n\n"
         ^ "theorem FreshRename_p4programIR_id (value : p4programIR) : FreshRename_p4programIR _root_.id value = value :=\n  "
-        ^ identity_proof shapes "FreshRename_p4programIR" [root, "value"] ^ "\n\n" in
-  "section\n\n" ^ (if has_extern root then "variable [SpecTecExternTypes]\n\n" else "")
-  ^ name_helpers ^ "\n\n" ^ functions false ^ functions true ^ root_wrapper
-  ^ alpha_interface
-  ^ (if nominal then "\n\n" ^ nominal_alpha_interface else "")
+        ^ identity_proof shapes "FreshRename_p4programIR" [root, "value"] ^ "\n\n") in
+  let source_protection = match source_root with
+    | None -> ""
+    | Some source ->
+        let body = protect shapes source "value" in
+        "def FreshProtected_p4program (value : p4program) : List String :=\n  "
+        ^ body ^ "\n\n" in
+  let roots = Option.to_list root @ protected_types @ Option.to_list source_root in
+  let alpha = match root with
+    | None -> ""
+    | Some _ -> name_helpers ^ "\n\n" ^ functions false ^ functions true
+      ^ root_wrapper ^ alpha_interface
+      ^ (if nominal then "\n\n" ^ nominal_alpha_interface else "") in
+  "section\n\n" ^ (if List.exists has_extern roots
+    then "variable [SpecTecExternTypes]\n\n" else "")
+  ^ protect_functions ^ protected_relations ^ source_protection ^ alpha
   ^ "\n\nend\n"

@@ -83,6 +83,19 @@
  (deps (alias fresh-nominal-test)))
 
 (rule
+ (alias fresh-supply-test)
+ (deps check_fresh_supply.py fresh-supply.watsup fresh-supply-proof.lean)
+ (action
+  (run python3 %{dep:check_fresh_supply.py}
+   --exe %{exe:../../lib/lean-skeleton/main.exe}
+   --source %{dep:fresh-supply.watsup}
+   --proof %{dep:fresh-supply-proof.lean})))
+
+(alias
+ (name backend-lean)
+ (deps (alias fresh-supply-test)))
+
+(rule
  (alias local-proof-support-test)
  (deps check_local_proof_support.py local-proof-support.lean
   relation-local.watsup ordered-eval.watsup output-search.watsup

@@ -14,6 +14,7 @@
   relation_graph
   ordered_semantics
   translator
+  fresh_supply_lower
   order
   printer
   pipeline

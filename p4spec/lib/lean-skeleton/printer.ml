@@ -2573,6 +2573,8 @@ let print ?(fresh_rollback = false) ?(relation_local = false) ?analysis
   ^ (if extern_types && not relation_local then
        "variable [SpecTecExternTypes]\n\n" else "")
   ^ printed_other_groups
+  ^ (if relation_local || fresh_rollback then
+       "\n\n" ^ Fresh_alpha.render ~nominal:relation_local program else "")
   ^ (if p4_externs then "\n\n"
        ^ if relation_local && extern_types then
            "section\n\nvariable [SpecTecExternTypes]\n\n"
@@ -2587,6 +2589,4 @@ let print ?(fresh_rollback = false) ?(relation_local = false) ?analysis
            ~model_relations:local_model_relations
            (Option.get analysis) relations
        else print_wfs_program relations)
-  ^ (if relation_local || fresh_rollback then
-       "\n\n" ^ Fresh_alpha.render ~nominal:relation_local program else "")
   ^ "\n\nend SpecTec"
