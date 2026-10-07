@@ -1344,6 +1344,16 @@ type program_constructor = {
   rule_index : string;
 }
 
+type local_plan_rule = {
+  plan_declaration : string;
+  plan_constructor : program_constructor;
+  allowed_constructor : program_constructor;
+  plan_name : string;
+  plan_owner : string;
+  plan_rule : string;
+  witness_pattern : string;
+}
+
 let program_constructor name type_parameters equality_parameters print_parameters
     binders head rule_index : program_constructor =
   let bound = type_parameters @ List.map fst binders in
@@ -1364,7 +1374,9 @@ let program_constructor name type_parameters equality_parameters print_parameter
 
 (* All levels are uniform: cases_in_program peels one wrapper per level,
    then leaves the individual rule cases for the caller's next tactic. *)
-let print_program_membership (constructors : program_constructor list) : string =
+let print_program_membership ?(tactic_name = "cases_in_program")
+    ?(program_name = "InProgram") ?(index_type = "SpecTecWFS.Rule Atom")
+    (constructors : program_constructor list) : string =
   let width = 32 in
   let rec take n acc rest = match n, rest with
     | 0, _ | _, [] -> List.rev acc, rest
@@ -1373,20 +1385,21 @@ let print_program_membership (constructors : program_constructor list) : string 
     | [] -> []
     | xs -> let first, rest = take width [] xs in first :: chunks rest in
   let group_name level index = print_identifier
-    ("InProgram:" ^ string_of_int level ^ ":" ^ string_of_int index) in
+    (program_name ^ ":" ^ string_of_int level ^ ":" ^ string_of_int index) in
   let declare name body =
-    "inductive " ^ name ^ " : SpecTecWFS.Rule Atom → Prop where\n"
+    "inductive " ^ name ^ " : " ^ index_type ^ " → Prop where\n"
     ^ String.concat "\n" body in
   let print_constructor name constructor =
     "  | " ^ constructor.constructor_name ^ constructor.constructor_parameters
     ^ " : " ^ name ^ " " ^ constructor.rule_index in
   let tactic depth =
-    "macro \"cases_in_program\" h:Lean.Parser.Tactic.elimTarget : tactic =>\n"
+    "macro \"" ^ tactic_name
+    ^ "\" h:Lean.Parser.Tactic.elimTarget : tactic =>\n"
     ^ "  `(tactic| (cases $h"
     ^ String.concat "" (List.init depth (fun _ ->
         " <;> (rename_i programPart; cases programPart)")) ^ "))" in
   if List.length constructors <= width then
-    declare "InProgram" (List.map (print_constructor "InProgram") constructors)
+    declare program_name (List.map (print_constructor program_name) constructors)
     ^ "\n\n" ^ tactic 0
   else
   let leaves = List.mapi (fun i members ->
@@ -1400,7 +1413,7 @@ let print_program_membership (constructors : program_constructor list) : string 
   let wrap parent children =
     List.mapi (fun i (name, aliases) ->
       let ctor = print_identifier ("group:" ^ string_of_int i) in
-      "  | " ^ ctor ^ " {rule : SpecTecWFS.Rule Atom} : "
+      "  | " ^ ctor ^ " {rule : " ^ index_type ^ "} : "
       ^ name ^ " rule → " ^ parent ^ " rule",
       List.map (fun (constructor, payload) ->
         constructor, parent ^ "." ^ ctor ^ " (" ^ payload ^ ")") aliases) children
@@ -1414,11 +1427,11 @@ let print_program_membership (constructors : program_constructor list) : string 
     let definitions, roots, depth = pack (level + 1) (List.map snd groups) in
     List.map fst groups @ definitions, roots, depth in
   let branches, roots, depth = pack 1 (List.map snd leaves) in
-  let body, aliases = wrap "InProgram" roots in
+  let body, aliases = wrap program_name roots in
   String.concat "\n\n"
-    (List.map fst leaves @ branches @ [declare "InProgram" body]
+    (List.map fst leaves @ branches @ [declare program_name body]
      @ List.map (fun (constructor, payload) ->
-       "abbrev InProgram." ^ constructor.constructor_name
+       "abbrev " ^ program_name ^ "." ^ constructor.constructor_name
        ^ constructor.constructor_parameters ^ " := " ^ payload) (List.concat aliases)
      @ [tactic depth])
 
@@ -1720,26 +1733,17 @@ let print_application_suffix (bound : string list) (suffix : string)
 let print_public_failure (bound : string list) (application : L.application) : string =
   print_application_suffix bound ".fails" application
 
-let print_local_membership (constructors : program_constructor list) : string =
-  "inductive InProgram : SpecTecWFS.Rule Atom → Prop where\n"
-  ^ String.concat "\n" (List.map (fun constructor ->
-      "  | " ^ constructor.constructor_name ^ constructor.constructor_parameters
-      ^ " : InProgram " ^ constructor.rule_index) constructors)
-
-let local_rule_parts (members : StringSet.t) (rule : L.rule) :
-    L.application list * L.application list * L.premise list =
-  let internal (application : L.application) = match application.target with
-    | L.Local _ -> true
-    | L.Global name -> StringSet.mem name members
-  in
-  List.fold_left (fun (positive, negative, side) premise ->
-    match premise with
-    | L.Holds application when internal application ->
-        positive @ [ application ], negative, side
-    | L.NotHolds (application, _) when internal application ->
-        positive, negative @ [ application ], side
-    | _ -> positive, negative, side @ [ premise ])
-    ([], [], []) rule.premises
+let print_local_membership ~(component_index : int)
+    (constructors : program_constructor list) : string =
+  if List.length constructors > 32 then
+    print_program_membership
+      ~tactic_name:("cases_in_program_" ^ string_of_int component_index)
+      constructors
+  else
+    "inductive InProgram : SpecTecWFS.Rule Atom → Prop where\n"
+    ^ String.concat "\n" (List.map (fun constructor ->
+        "  | " ^ constructor.constructor_name ^ constructor.constructor_parameters
+        ^ " : InProgram " ^ constructor.rule_index) constructors)
 
 let print_local_side_premise (bound : string list) (premise : L.premise) : string =
   match premise with
@@ -1751,33 +1755,6 @@ let print_local_side_premise (bound : string list) (premise : L.premise) : strin
         binders (print_public_failure inner_bound application)
   | L.Holds application -> print_application bound application
   | L.Prop proposition -> print_prop bound proposition
-
-let rec print_local_side (bound : string list) (premises : L.premise list) : string =
-  match premises with
-  | [] -> "_root_.True"
-  | premise :: rest ->
-      "(" ^ print_local_side_premise bound premise ^ " ∧ "
-      ^ print_local_side bound rest ^ ")"
-
-let print_local_rule_record (relations : L.declaration list) (members : StringSet.t)
-    (bound : string list) (rule : L.rule) : string =
-  let positive, negative, side = local_rule_parts members rule in
-  "{ head := " ^ print_atom relations bound rule.conclusion
-  ^ ", positive := " ^ print_atom_list relations bound positive
-  ^ ", negative := " ^ print_atom_list relations bound negative
-  ^ ", side := " ^ print_local_side bound side ^ " }"
-
-let print_local_rule_constructor (relations : L.declaration list)
-    (members : StringSet.t) (index : int) (declaration : L.declaration)
-    (rule : L.rule) : program_constructor =
-  match declaration with
-  | L.Relation { type_parameters; equality_parameters; print_parameters; _ } ->
-      let bound = type_parameters @ List.map fst rule.binders in
-      program_constructor (program_rule_name index)
-        type_parameters equality_parameters print_parameters rule.binders
-        (print_atom relations bound rule.conclusion)
-        (print_local_rule_record relations members bound rule)
-  | _ -> invalid_arg "expected relation"
 
 let print_local_public_relation (qualified : string) (recursive : bool)
     (relations : L.declaration list) (declaration : L.declaration) : string =
@@ -1800,13 +1777,32 @@ let print_local_public_relation (qualified : string) (recursive : bool)
       let prefix suffix = "def " ^ print_identifier name ^ suffix
         ^ print_wfs_parameters type_parameters equality_parameters print_parameters
         ^ parameters in
+      let public_application = { application with
+        instance_arguments = List.map (fun parameter ->
+          L.TypeParameter parameter) equality_parameters;
+        print_instance_arguments = List.map (fun parameter ->
+          L.TypeParameter parameter) print_parameters } in
+      let certificate = "theorem " ^ print_identifier name
+        ^ ".checkedSuccess"
+        ^ print_wfs_parameters type_parameters equality_parameters print_parameters
+        ^ parameters
+        ^ " (same : " ^ qualified ^ ".Atom → " ^ qualified ^ ".Atom → Bool)"
+        ^ " (sameSound : ∀ left right, same left right = true → left = right)"
+        ^ " (fuel : Nat)"
+        ^ " (certificate : SpecTecPlan.SuccessCertificate " ^ qualified
+        ^ ".InProgram)"
+        ^ " (accepted : SpecTecPlan.checkSuccessWith same fuel certificate = some "
+        ^ atom ^ ") : " ^ print_application type_parameters public_application
+        ^ " := by\n  exact SpecTecPlan.checkSuccessWith_sound same sameSound"
+        ^ " fuel certificate _ accepted" in
       String.concat "\n\n"
         ([ prefix "" ^ " : Prop :=\n  SpecTecWFS.Holds " ^ qualified ^ ".InProgram " ^ atom;
            prefix ".fails" ^ " : Prop :=\n  SpecTecWFS.Fails " ^ qualified ^ ".InProgram " ^ atom ]
-         @ if recursive then
+         @ (if recursive then
              [ prefix ".undetermined" ^ " : Prop :=\n  SpecTecWFS.Undetermined "
                ^ qualified ^ ".InProgram " ^ atom ]
            else [])
+         @ [certificate])
   | _ -> invalid_arg "expected relation"
 
 let print_local_rule_premise (qualified : string) (relations : L.declaration list)
@@ -1824,9 +1820,16 @@ let print_local_rule_premise (qualified : string) (relations : L.declaration lis
       ^ print_atom ~atom_name:(qualified ^ ".Atom") relations bound application
   | _ -> print_local_side_premise bound premise
 
+let local_membership_call qualified type_parameters equality_parameters print_parameters index =
+  "@" ^ qualified ^ ".InProgram." ^ program_rule_name index
+  ^ (if !program_has_extern_types then " (inferInstance : SpecTecExternTypes)" else "")
+  ^ (if !program_has_p4_extern_model then " (inferInstance : SpecTecP4ExternModel)" else "")
+  ^ String.concat "" (List.map (fun parameter -> " " ^ print_identifier parameter) type_parameters)
+  ^ String.concat "" (List.map (fun _ -> " inferInstance") (equality_parameters @ print_parameters))
+
 let print_local_rule_theorem (qualified : string) (relations : L.declaration list)
     (members : StringSet.t) (index : int) (declaration : L.declaration)
-    (rule : L.rule) : string =
+    (rule : L.rule) (plan : local_plan_rule) : string =
   match declaration with
   | L.Relation { name; type_parameters; equality_parameters; print_parameters;
                  rules; _ } ->
@@ -1837,31 +1840,60 @@ let print_local_rule_theorem (qualified : string) (relations : L.declaration lis
         " (h" ^ string_of_int premise_index ^ " : "
         ^ print_local_rule_premise qualified relations members bound premise ^ ")")
         rule.premises in
-      let numbered = List.mapi (fun i premise -> i, premise) rule.premises in
-      let internal application = match application.L.target with
-        | L.Local _ -> true
-        | L.Global target -> StringSet.mem target members in
-      let positive = List.filter_map (function
-        | i, L.Holds application when internal application -> Some ("h" ^ string_of_int i)
-        | _ -> None) numbered in
-      let negative = List.filter_map (function
-        | i, L.NotHolds (application, _) when internal application ->
-            Some ("h" ^ string_of_int i)
-        | _ -> None) numbered in
-      let side = List.filter_map (function
-        | _, L.Holds application when internal application -> None
-        | _, L.NotHolds (application, _) when internal application -> None
-        | i, _ -> Some ("h" ^ string_of_int i)) numbered in
-      let binder_arguments = String.concat ""
-        (List.map (fun (binder, _) -> " " ^ print_identifier binder) rule.binders) in
+      let type_arguments = String.concat ""
+        (List.map (fun parameter -> " (" ^ print_identifier parameter
+          ^ " := " ^ print_identifier parameter ^ ")") type_parameters) in
       "theorem " ^ print_identifier name ^ "." ^ print_identifier rule.name
       ^ print_wfs_parameters type_parameters equality_parameters print_parameters
       ^ print_wfs_binders bound rule.binders ^ String.concat "" assumptions
       ^ " : " ^ print_application bound rule.conclusion ^ " :=\n"
-      ^ "  SpecTecWFS.Holds.rule _ (" ^ qualified ^ ".InProgram."
-      ^ program_rule_name index ^ binder_arguments ^ ")\n"
-      ^ "    (" ^ all_proof side ^ ") (" ^ all_proof positive ^ ") ("
-      ^ all_proof negative ^ ")"
+      ^ "  SpecTecPlan.Plan.holds_rule (program := " ^ qualified ^ ".InProgram) (" ^ qualified ^ "."
+      ^ program_rule_name index ^ "_plan" ^ type_arguments ^ ").body () "
+      ^ plan.witness_pattern ^ " ("
+      ^ local_membership_call qualified type_parameters equality_parameters print_parameters index
+      ^ " (" ^ plan.witness_pattern
+      ^ " : (" ^ qualified ^ "." ^ program_rule_name index ^ "_plan"
+      ^ type_arguments ^ ").body.Witness))\n"
+      ^ "    (by dsimp [" ^ qualified ^ "." ^ program_rule_name index
+      ^ "_plan, SpecTecPlan.Plan.premises, SpecTecEval.Prefix]; all_goals exact "
+      ^ all_proof (List.mapi (fun i _ -> "h" ^ string_of_int i) rule.premises) ^ ")"
+
+  | _ -> invalid_arg "expected relation"
+
+let print_local_rule_cases (qualified : string)
+    (_component_index : int)
+    (_members : StringSet.t)
+    (relations : L.declaration list)
+    (_indexed_rules : (int * L.declaration * L.rule) list)
+    (declaration : L.declaration) : string =
+  match declaration with
+  | L.Relation { name; type_parameters; equality_parameters; print_parameters;
+                 argument_types; rules; _ } ->
+      let arg_names = List.mapi (fun i _ -> "arg" ^ string_of_int i)
+        argument_types in
+      let type_scope = type_parameters @ List.map (fun (rule : L.rule) ->
+        rule.name) rules in
+      let args = String.concat "" (List.map2 (fun arg typ ->
+        " (" ^ arg ^ " : " ^ print_type type_scope typ ^ ")")
+        arg_names argument_types) in
+      let application = {
+        L.target = L.Global name;
+        type_arguments = List.map (fun parameter ->
+          L.TypeParameter parameter) type_parameters;
+        instance_arguments = List.map (fun parameter ->
+          L.TypeParameter parameter) equality_parameters;
+        print_instance_arguments = List.map (fun parameter ->
+          L.TypeParameter parameter) print_parameters;
+        arguments = List.map2 (fun arg typ -> L.Variable (arg, typ))
+          arg_names argument_types;
+      } in
+      let target = print_atom ~atom_name:(qualified ^ ".Atom") relations
+        type_parameters application in
+      "theorem " ^ print_identifier name ^ ".ruleCases"
+      ^ print_wfs_parameters type_parameters equality_parameters print_parameters
+      ^ args ^ " (proof : " ^ print_application type_parameters application
+      ^ ") : SpecTecPlan.Cases " ^ qualified ^ ".Allowed () " ^ target
+      ^ " :=\n  SpecTecPlan.ProgramOf.holds_cases proof"
   | _ -> invalid_arg "expected relation"
 
 let print_local_dispatch_constructor (relations : L.declaration list)
@@ -1894,7 +1926,7 @@ let print_local_dispatch_constructor (relations : L.declaration list)
         type_parameters equality_parameters print_parameters binders head body
   | _ -> invalid_arg "expected relation"
 
-let print_local_dispatch_theorem (qualified : string) (members : StringSet.t)
+let print_local_dispatch_theorem (qualified : string) (_members : StringSet.t)
     (index : int) (declaration : L.declaration) : string =
   match declaration with
   | L.Relation { name; type_parameters; equality_parameters; print_parameters;
@@ -1913,17 +1945,17 @@ let print_local_dispatch_theorem (qualified : string) (members : StringSet.t)
       let proof = print_application type_parameters { L.target = L.Global name;
         type_arguments = List.map (fun parameter -> L.TypeParameter parameter) type_parameters;
         instance_arguments = []; print_instance_arguments = []; arguments } in
-      let side, positive = if StringSet.mem name members then
-          "trivial", "⟨proof, trivial⟩"
-        else "proof", "trivial" in
       "theorem " ^ qualified ^ "." ^ print_identifier ("dispatch:" ^ name)
       ^ print_wfs_parameters type_parameters equality_parameters print_parameters
       ^ binders ^ " (proof : " ^ proof ^ ") : SpecTecWFS.Holds "
       ^ qualified ^ ".InProgram " ^ call ^ " := by\n"
-      ^ "  exact SpecTecWFS.Holds.rule _ (" ^ qualified ^ ".InProgram."
-      ^ program_rule_name index ^ " "
-      ^ String.concat " " (List.mapi (fun i _ -> "arg" ^ string_of_int i) argument_types)
-      ^ ") " ^ side ^ " " ^ positive ^ " trivial"
+      ^ "  apply SpecTecPlan.Plan.holds_rule (" ^ qualified ^ "."
+      ^ program_rule_name index ^ "_plan).body () _ ("
+      ^ local_membership_call qualified type_parameters equality_parameters print_parameters index ^ " "
+      ^ List.fold_right (fun i rest -> "⟨arg" ^ string_of_int i ^ ", " ^ rest ^ "⟩")
+          (List.mapi (fun i _ -> i) argument_types) "()"
+      ^ ")\n  exact ⟨proof, trivial⟩"
+
   | _ -> invalid_arg "expected relation"
 
 let eval_product_type (bound : string list) (types : L.type_ref list) : string =
@@ -1945,25 +1977,6 @@ let rec eval_tuple_term (bound : string list) (terms : L.term list) : string =
   | [ term ] -> print_term bound term
   | term :: rest ->
       "(" ^ print_term bound term ^ ", " ^ eval_tuple_term bound rest ^ ")"
-
-let eval_witness_type (bound : string list)
-    (binders : (string * L.type_ref) list) : string =
-  List.fold_right
-    (fun (binder, typ) rest ->
-      "(_root_.Sigma (fun (" ^ print_identifier binder ^ " : "
-      ^ print_type bound typ ^ ") => " ^ rest ^ "))")
-    binders "_root_.Unit"
-
-let rec eval_witness_pattern (binders : (string * L.type_ref) list) : string =
-  match binders with
-  | [] -> "_"
-  | (binder, _) :: rest ->
-      "⟨" ^ print_identifier binder ^ ", " ^ eval_witness_pattern rest ^ "⟩"
-
-type eval_rule_plan = {
-  declaration : string;
-  plan_call : string;
-}
 
 type eval_premise = {
   proposition : string;
@@ -2039,82 +2052,23 @@ let print_eval_premise (qualified : string) (all_relations : L.declaration list)
   | L.NotHolds _ | L.NotExists _ | L.Prop _ ->
       { proposition = public; public_evidence = Fun.id }
 
-let print_eval_rule_plan (qualified : string) (all_relations : L.declaration list)
-    (component_relations : L.declaration list)
-    (members : StringSet.t) (input_ref : string) (output_ref : string)
-    (positions : int list) (declaration : L.declaration) (rule_index : int)
-    (rule : L.rule) : eval_rule_plan =
-  match declaration with
-  | L.Relation { name; type_parameters; equality_parameters; print_parameters;
-                 rules; _ } ->
-      let rule_scope = List.map (fun (member : L.rule) -> member.name) rules in
-      let bound = rule_scope @ type_parameters @ List.map fst rule.binders in
-      let base = name ^ ":eval:rule:" ^ string_of_int rule_index in
-      let plan_name = print_identifier (base ^ ":plan") in
-      let eval_premises = List.mapi
-        (fun premise_index premise ->
-          print_eval_premise qualified all_relations component_relations members
-            name rule_index premise_index bound premise)
-        rule.premises in
-      let premise_values = List.map (fun premise -> premise.proposition) eval_premises in
-      let premise_list = "([" ^ String.concat ", " premise_values ^ "] : List Prop)" in
-      let type_arguments = String.concat ""
-        (List.map (fun parameter ->
-           " (" ^ print_identifier parameter ^ " := "
-           ^ print_identifier parameter ^ ")") type_parameters) in
-      let recoverable = List.mapi (fun index premise -> index, premise) rule.premises
-        |> List.filter_map (fun (index, premise) -> match premise with
-             | L.Prop _ | L.NotHolds _ | L.NotExists _ -> Some index
-             | L.Holds _ when List.mem index rule.catchable -> Some index
-             | L.Holds { target = L.Global target; _ }
-               when String.length rule.name >= 7
-                 && String.sub rule.name 0 7 = "regular"
-                 && target = name ^ ":regular" -> Some index
-             | L.Holds _ -> None) in
-      let recoverable_list = "["
-        ^ String.concat ", " (List.map string_of_int recoverable) ^ "]" in
-      let indexed_arguments = List.mapi (fun index term -> index, term)
-        rule.conclusion.arguments in
-      let inputs, outputs = List.partition
-        (fun (index, _) -> List.mem index positions) indexed_arguments in
-      let input_term = eval_tuple_term bound (List.map snd inputs) in
-      let output_term = eval_tuple_term bound (List.map snd outputs) in
-      let witness_type = eval_witness_type bound rule.binders in
-      let witness_pattern = eval_witness_pattern rule.binders in
-      let premise_arguments = List.mapi (fun index premise ->
-        let evidence = "(SpecTecEval.Prefix.get premiseProof (position := "
-          ^ string_of_int index ^ ") (by rfl))" in
-        " " ^ premise.public_evidence evidence) eval_premises |> String.concat "" in
-      let binder_arguments = String.concat ""
-        (List.map (fun (binder, _) -> " " ^ print_identifier binder) rule.binders) in
-      let unpack_witness = match rule.binders with
-        | [] -> ""
-        | _ -> "\n    rcases witness with " ^ witness_pattern in
-      let declaration = "def " ^ plan_name
-        ^ print_wfs_parameters type_parameters equality_parameters print_parameters
-        ^ " :\n    SpecTecEval.EvalRulePlan " ^ input_ref ^ " " ^ output_ref
-        ^ " " ^ print_identifier name ^ ".evalSucceeds := {\n"
-        ^ "  Witness := " ^ witness_type ^ "\n"
-        ^ "  input := fun " ^ witness_pattern ^ " => " ^ input_term ^ "\n"
-        ^ "  output := fun " ^ witness_pattern ^ " => " ^ output_term ^ "\n"
-        ^ "  premises := fun " ^ witness_pattern ^ " => " ^ premise_list ^ "\n"
-        ^ "  recoverable := " ^ recoverable_list ^ "\n"
-        ^ "  publicSound := by\n"
-        ^ "    intro witness premiseProof" ^ unpack_witness ^ "\n"
-        ^ "    have result := ("
-        ^ print_identifier name ^ "." ^ print_identifier rule.name
-        ^ type_arguments ^ binder_arguments ^ premise_arguments ^ ")\n"
-        ^ "    simpa only [" ^ print_identifier name ^ ".evalSucceeds] using result\n"
-        ^ "}" in
-      { declaration; plan_call = plan_name ^ type_arguments }
-  | _ -> invalid_arg "expected relation"
+let rule_recoverable (name : string) (rule : L.rule) : int list =
+  List.mapi (fun index premise -> index, premise) rule.premises
+  |> List.filter_map (fun (index, premise) -> match premise with
+       | L.Prop _ | L.NotHolds _ | L.NotExists _ -> Some index
+       | L.Holds _ when List.mem index rule.catchable -> Some index
+       | L.Holds { target = L.Global target; _ }
+         when String.starts_with ~prefix:"regular" rule.name
+           && target = name ^ ":regular" -> Some index
+       | L.Holds _ -> None)
 
-let print_ordered_evaluator (qualified : string) (all_relations : L.declaration list)
-    (component_relations : L.declaration list)
-    (members : StringSet.t) (recursive : bool) (declaration : L.declaration) : string =
+
+let print_ordered_evaluator (qualified : string)
+    (_component_relations : L.declaration list) (plans : local_plan_rule list)
+    (recursive : bool) (declaration : L.declaration) : string =
   match declaration with
   | L.Relation { name; type_parameters; equality_parameters; print_parameters;
-                 argument_types; input_positions; selection_policy; rules; _ } ->
+                 argument_types; input_positions; rules; _ } ->
       let positions = Option.value input_positions
         ~default:(List.init (max 0 (List.length argument_types - 1)) Fun.id) in
       let rule_scope = List.map (fun (rule : L.rule) -> rule.name) rules in
@@ -2176,58 +2130,31 @@ let print_ordered_evaluator (qualified : string) (all_relations : L.declaration 
       let fresh_sites_declaration =
         "def " ^ print_identifier name ^ ".freshSites : List SpecTecFresh.Site := ["
         ^ String.concat ", " fresh_sites ^ "]" in
-      let plans = List.mapi (fun index rule ->
-        print_eval_rule_plan qualified all_relations component_relations members
-          input_ref output_ref positions declaration index rule) rules in
-      (* An empty plan list provides no witness with which Lean can infer the
-         plan's third universe.  Generated SpecTec values live in `Type`, so
-         pin that otherwise-unconstrained empty-list element type to level 0. *)
-      let plan_constructor =
-        if rules = [] then "SpecTecEval.EvalRulePlan.{0, 0, 0}"
-        else "SpecTecEval.EvalRulePlan" in
-      let plan_type = plan_constructor ^ " " ^ input_ref ^ " " ^ output_ref
-        ^ " " ^ print_identifier name ^ ".evalSucceeds" in
-      let eval_rules = "def " ^ print_identifier name ^ ".evalRules"
-        ^ wfs_parameters ^ " : List (" ^ plan_type ^ ") := ["
-        ^ String.concat ", " (List.map (fun plan -> plan.plan_call) plans) ^ "]" in
-      let policy = match selection_policy with
-        | L.Nondeterministic -> ".nondeterministic"
-        | L.Ordered -> ".ordered" in
-      let undetermined =
-        if not recursive then
-          "def " ^ print_identifier name ^ ".evalUndetermined" ^ wfs_parameters
-          ^ " (_input : " ^ input_ref ^ ") : Prop := False"
-        else
-          let undetermined_application = print_application_suffix
-            (type_scope @ all_names) ".undetermined" application in
-          "def " ^ print_identifier name ^ ".evalUndetermined" ^ wfs_parameters
-          ^ " : " ^ input_ref ^ " → Prop\n"
-          ^ "  | " ^ input_pattern ^ " => ∃ output : " ^ output_ref
-          ^ ", match output with\n    | " ^ output_pattern ^ " => "
-          ^ undetermined_application
-      in
-      let eval_rules_call = "(" ^ print_identifier name ^ ".evalRules"
-        ^ type_arguments ^ ")" in
-      let undetermined_call = "(" ^ print_identifier name ^ ".evalUndetermined"
-        ^ type_arguments ^ ")" in
+      let signature_call = "(" ^ qualified ^ "."
+        ^ print_identifier (name ^ ":signature") ^ type_arguments ^ ")" in
+      let alternatives = List.map (fun (rule : L.rule) ->
+        let plan = List.find (fun plan -> plan.plan_owner = name
+          && plan.plan_rule = rule.name) plans in
+        "⟨" ^ qualified ^ "." ^ plan.plan_name ^ type_arguments ^ ", "
+        ^ qualified ^ ".Allowed." ^ plan.allowed_constructor.constructor_name
+        ^ type_arguments ^ "⟩") rules in
       let evaluator = "def " ^ print_identifier name ^ ".evaluator"
         ^ wfs_parameters ^ " : SpecTecEval.Evaluator " ^ input_ref ^ " "
-        ^ output_ref ^ " " ^ print_identifier name ^ ".evalSucceeds :=\n  { "
-        ^ "policy := " ^ policy ^ ", rules := " ^ eval_rules_call
-        ^ ", undetermined := " ^ undetermined_call ^ " }" in
-      let evaluator_call = "(" ^ print_identifier name ^ ".evaluator"
-        ^ type_arguments ^ ")" in
-      let all_failed = "abbrev " ^ print_identifier name ^ ".allRulesFailed"
-        ^ wfs_parameters ^ " : " ^ input_ref ^ " → Prop :=\n  "
-        ^ "SpecTecEval.AllFailed " ^ eval_rules_call in
-      let selected = "abbrev " ^ print_identifier name ^ ".evalSelected"
-        ^ wfs_parameters ^ " : " ^ input_ref ^ " → " ^ output_ref
-        ^ " → Prop :=\n  SpecTecEval.Selected " ^ policy ^ " " ^ eval_rules_call in
+        ^ output_ref ^ " " ^ print_identifier name ^ ".evalSucceeds :=\n  "
+        ^ "SpecTecPlan.evaluator " ^ qualified ^ ".Allowed " ^ signature_call
+        ^ " [" ^ String.concat ", " alternatives ^ "] _root_.Bool." ^ string_of_bool recursive in
+      let evaluator_call = "(" ^ print_identifier name ^ ".evaluator" ^ type_arguments ^ ")" in
+      let alias suffix field = "abbrev " ^ print_identifier name ^ suffix
+        ^ wfs_parameters ^ " := " ^ evaluator_call ^ "." ^ field in
+      let eval_rules = alias ".evalRules" "rules" in
+      let undetermined = alias ".evalUndetermined" "undetermined" in
+      let all_failed = alias ".allRulesFailed" "AllFailed" in
+      let selected = alias ".evalSelected" "Selected" in
       let selected_sound = "theorem " ^ print_identifier name ^ ".selected_sound"
-        ^ wfs_parameters ^ " {input : " ^ input_ref ^ "} {output : "
-        ^ output_ref ^ "}\n    (proof : " ^ print_identifier name
-        ^ ".evalSelected input output) :\n    " ^ print_identifier name
-        ^ ".evalSucceeds input output :=\n  SpecTecEval.Selected.sound proof" in
+        ^ wfs_parameters ^ " {input : " ^ input_ref ^ "} {output : " ^ output_ref
+        ^ "} (proof : " ^ print_identifier name ^ ".evalSelected input output) : "
+        ^ print_identifier name ^ ".evalSucceeds input output :=\n  "
+        ^ "SpecTecEval.Evaluator.selected_sound (evaluator := " ^ evaluator_call ^ ") proof" in
       let boundary = " [SpecTecEval.Boundary " ^ input_ref
         ^ " _root_.String _root_.String]" in
       let outcome = "(SpecTecEval.Outcome " ^ output_ref
@@ -2236,10 +2163,406 @@ let print_ordered_evaluator (qualified : string) (all_relations : L.declaration 
         ^ boundary ^ " : _root_.Nat → " ^ input_ref ^ " → " ^ outcome
         ^ " → Prop :=\n  " ^ evaluator_call ^ ".Evaluation" in
       String.concat "\n\n"
-        ([ input_alias; output_alias; succeeds; fresh_sites_declaration ]
-         @ List.map (fun plan -> plan.declaration) plans
-         @ [ eval_rules; undetermined; evaluator; all_failed; selected;
-             selected_sound; eval ])
+        [ input_alias; output_alias; succeeds; fresh_sites_declaration;
+          evaluator; eval_rules; undetermined; all_failed; selected; selected_sound; eval ]
+  | _ -> invalid_arg "expected relation"
+
+let plan_environment_pattern (binders : (string * L.type_ref) list) : string =
+  List.fold_left (fun pattern (name, _) ->
+    "⟨" ^ pattern ^ ", " ^ print_identifier name ^ "⟩") "()" binders
+
+let plan_witness (terms : string list) : string =
+  List.fold_right (fun term rest ->
+    "⟨" ^ term ^ ", " ^ rest ^ "⟩") terms "()"
+
+let print_plan_signature (relations : L.declaration list) (declaration : L.declaration) =
+  match declaration with
+  | L.Relation { name; type_parameters; equality_parameters; print_parameters;
+                 argument_types; input_positions; selection_policy; _ } ->
+      let positions = Option.value input_positions
+        ~default:(List.init (max 0 (List.length argument_types - 1)) Fun.id) in
+      let indexed = List.mapi (fun i typ -> i, typ) argument_types in
+      let inputs, outputs = List.partition (fun (i, _) -> List.mem i positions) indexed in
+      let names = List.mapi (fun i _ -> "arg" ^ string_of_int i) argument_types in
+      let names_for values = List.map (fun (i, _) -> List.nth names i) values in
+      let application = { L.target = L.Global name;
+        type_arguments = List.map (fun p -> L.TypeParameter p) type_parameters;
+        instance_arguments = []; print_instance_arguments = [];
+        arguments = List.map2 (fun n t -> L.Variable (n, t)) names argument_types } in
+      "abbrev " ^ print_identifier (name ^ ":signature")
+      ^ print_wfs_parameters type_parameters equality_parameters print_parameters
+      ^ " : SpecTecPlan.Signature Atom :=\n  { Input := "
+      ^ eval_product_type type_parameters (List.map snd inputs) ^ ", Output := "
+      ^ eval_product_type type_parameters (List.map snd outputs)
+      ^ ", inputPositions := [" ^ String.concat ", " (List.map string_of_int positions)
+      ^ "], policy := " ^ (match selection_policy with
+          | L.Ordered -> ".ordered" | L.Nondeterministic -> ".nondeterministic")
+      ^ ", atom := fun " ^ eval_tuple_pattern (names_for inputs) ^ " "
+      ^ eval_tuple_pattern (names_for outputs) ^ " => "
+      ^ print_atom relations (type_parameters @ names) application ^ " }"
+  | _ -> invalid_arg "expected relation"
+
+let signature_type_arguments (parameters : string list) =
+  String.concat "" (List.map (fun parameter -> " (" ^ print_identifier parameter
+    ^ " := " ^ print_identifier parameter ^ ")") parameters)
+
+let print_external_signature (qualified : string) (declaration : L.declaration) =
+  match declaration with
+  | L.Relation { name; type_parameters; equality_parameters; print_parameters; _ } ->
+      let arguments = signature_type_arguments type_parameters in
+      "abbrev " ^ print_identifier name ^ ".externalSignature"
+      ^ print_wfs_parameters type_parameters equality_parameters print_parameters
+      ^ " : SpecTecPlan.ExternalSignature :=\n  SpecTecPlan.Signature."
+      ^ (if emits_ordered_evaluator name then "evaluated" else "external")
+      ^ " (" ^ qualified ^ "." ^ print_identifier (name ^ ":signature") ^ arguments
+      ^ ") " ^ qualified ^ ".InProgram"
+      ^ (if emits_ordered_evaluator name then " (" ^ print_identifier name
+          ^ ".evaluator" ^ arguments ^ ")" else "")
+  | _ -> invalid_arg "expected relation"
+
+let print_local_plan_rule (all_relations : L.declaration list)
+    (component_relations : L.declaration list) (members : StringSet.t)
+    (index : int) (declaration : L.declaration) (rule : L.rule) : local_plan_rule =
+  match declaration with
+  | L.Relation { name; type_parameters; equality_parameters; print_parameters;
+                 rules; _ } ->
+      let plan_name = program_rule_name index ^ "_plan" in
+      let table = relation_table all_relations in
+      let call_shape (application : L.application) =
+        match application.target with
+          | L.Global target ->
+              (match StringMap.find_opt target table with
+              | Some (L.Relation { argument_types; type_parameters = parameters;
+                                   input_positions; selection_policy; _ }) ->
+                  let bindings = List.filter_map Fun.id
+                    (List.mapi (fun i parameter ->
+                       Option.map (fun typ -> parameter, typ)
+                         (List.nth_opt application.type_arguments i)) parameters) in
+                  let types = List.map
+                    (Translator.substitute_type_parameters bindings) argument_types in
+                  let positions = Option.value input_positions
+                    ~default:(List.init (max 0 (List.length types - 1)) Fun.id) in
+                  types, positions, selection_policy
+              | _ -> invalid_arg ("plan call has no signature: " ^ target))
+          | L.Local target ->
+              (match List.assoc_opt target rule.binders with
+              | Some (L.RelationType (inputs, output)) ->
+                  inputs @ [output], List.init (List.length inputs) Fun.id,
+                  L.Nondeterministic
+              | _ -> invalid_arg ("plan callback has no signature: " ^ target))
+      in
+      let has_signature application = match application.L.target with
+        | L.Local target ->
+            (match List.assoc_opt target rule.binders with
+            | Some (L.RelationType _) -> true | _ -> false)
+        | L.Global target -> StringMap.mem target table in
+      let output_bindings application =
+        let _, positions, _ = call_shape application in
+        let outputs = application.L.arguments
+        |> List.mapi (fun i term -> i, term)
+        |> List.filter_map (fun (i, term) ->
+             if List.mem i positions then None else Some term)
+        in
+        let names = List.filter_map (function
+          | L.Variable (name, _) when List.mem_assoc name rule.binders ->
+              Some name
+          | _ -> None) outputs in
+        if names <> [] && List.length names = List.length outputs
+          && List.length (List.sort_uniq String.compare names) = List.length names
+        then names else []
+      in
+      let mentions name term =
+        List.exists (fun (variable, _) -> variable = name)
+          (Translator.variables_in_term term) in
+      let mentioned_before index name =
+        rule.premises |> List.mapi (fun i premise -> i, premise)
+        |> List.exists (fun (i, premise) -> i < index &&
+             List.exists (mentions name) (Traversal.premise_terms premise)) in
+      let call_candidates = List.filter_map (fun (index, premise) ->
+        match premise with
+        | L.Holds application when has_signature application ->
+            (match output_bindings application with
+            | [] -> None
+            | names when List.for_all (fun name ->
+                not (mentioned_before index name)) names ->
+                let _, positions, _ = call_shape application in
+                let input_uses = application.arguments
+                  |> List.mapi (fun i term -> i, term)
+                  |> List.exists (fun (i, term) ->
+                       List.mem i positions
+                       && List.exists (fun name -> mentions name term) names) in
+                if input_uses then None else Some names
+            | _ -> None)
+        | _ -> None)
+        (List.mapi (fun i premise -> i, premise) rule.premises) in
+      let fresh_candidates = List.filter_map (fun (index, premise) ->
+        match premise with
+        | L.Prop (L.Predicate
+            (L.Native (("SpecTecFresh.Allocates" |
+              "_root_.SpecTecFresh.Allocates"),
+              [site; before; L.Variable (output, _); L.Variable (after, _)])))
+          when output <> after && List.mem_assoc output rule.binders
+            && List.mem_assoc after rule.binders
+            && not (mentioned_before index output)
+            && not (mentioned_before index after)
+            && not (List.exists (mentions output) [site; before])
+            && not (List.exists (mentions after) [site; before]) ->
+              Some [output; after]
+        | _ -> None) (List.mapi (fun i premise -> i, premise) rule.premises) in
+      let candidate_groups = call_candidates @ fresh_candidates in
+      let candidates = List.concat candidate_groups in
+      let produced = candidate_groups
+        |> List.filter (fun group -> List.for_all (fun name ->
+             List.length (List.filter (String.equal name) candidates) = 1) group)
+        |> List.concat in
+      let initial = List.filter (fun (name, _) ->
+        not (List.mem name produced)) rule.binders in
+      let initial_scope = List.map (fun (member : L.rule) -> member.name) rules
+        @ type_parameters in
+      let print_call (premise_index : int) (env_binders : (string * L.type_ref) list)
+          (application : L.application) =
+        let scope = initial_scope @ List.map fst env_binders in
+        let pattern = "()" in
+        let lambda body = "(fun " ^ pattern ^ " => " ^ body ^ ")" in
+        let argument_types, positions, policy = call_shape application in
+        let indexed_types = List.mapi (fun i typ -> i, typ) argument_types in
+        let inputs, outputs = List.partition
+          (fun (i, _) -> List.mem i positions) indexed_types in
+        let indexed_terms = List.mapi (fun i term -> i, term)
+          application.arguments in
+        let input_terms, output_terms = List.partition
+          (fun (i, _) -> List.mem i positions) indexed_terms in
+        let names = List.mapi (fun i _ -> "plan:arg:" ^ string_of_int i)
+          argument_types in
+        let synthetic = { application with
+          arguments = List.map2 (fun name typ -> L.Variable (name, typ))
+            names argument_types } in
+        let names_for indexed = List.map (fun (i, _) -> List.nth names i) indexed in
+        let input_pattern = eval_tuple_pattern (names_for inputs) in
+        let output_pattern = eval_tuple_pattern (names_for outputs) in
+        let input_type = eval_product_type scope (List.map snd inputs) in
+        let output_type = eval_product_type scope (List.map snd outputs) in
+        let policy = match policy with
+          | L.Nondeterministic -> ".nondeterministic"
+          | L.Ordered -> ".ordered" in
+        let kind = match application.target with
+          | L.Local _ -> `Internal
+          | L.Global target when StringSet.mem target members -> `Internal
+          | L.Global _ -> `External in
+        let values = "({ Input := " ^ input_type ^ ", Output := "
+          ^ output_type ^ ", inputPositions := ["
+          ^ String.concat ", " (List.map string_of_int positions)
+          ^ "], policy := " ^ policy in
+        let signature = match kind with
+          | `Scoped | `Internal ->
+              let atom = print_atom component_relations (scope @ names)
+                synthetic in
+              let atom_lambda = if kind = `Scoped then "fun " ^ pattern
+                ^ " " ^ input_pattern ^ " " ^ output_pattern ^ " => " ^ atom
+                else "fun " ^ input_pattern ^ " " ^ output_pattern
+                  ^ " => " ^ atom in
+              values ^ ", atom := " ^ atom_lambda
+              ^ " } : SpecTecPlan."
+              ^ (if kind = `Scoped then "ScopedSignature Atom _"
+                  else "Signature Atom") ^ ")"
+          | `External ->
+              (match application.target with
+              | L.Global "$fresh_typeId" ->
+                  let rule_index = Option.get (List.find_index
+                    (fun (candidate : L.rule) -> candidate.name = rule.name) rules) in
+                  let evaluation = print_eval_premise "" all_relations
+                    component_relations members name rule_index premise_index
+                    (scope @ names) (L.Holds synthetic) in
+                  values ^ ", boundary := .priorSCC, holds := (fun "
+                  ^ input_pattern ^ " " ^ output_pattern ^ " => "
+                  ^ print_application (scope @ names) synthetic ^ ")"
+                  ^ ", selection := some ⟨(fun " ^ input_pattern ^ " " ^ output_pattern
+                  ^ " => " ^ evaluation.proposition ^ "), (fun " ^ input_pattern
+                  ^ " " ^ output_pattern ^ " proof => "
+                  ^ evaluation.public_evidence "proof" ^ ")⟩"
+                  ^ " } : SpecTecPlan.ExternalSignature)"
+              | _ -> print_application_suffix scope ".externalSignature"
+                  {application with arguments = []}) in
+        let input = lambda (eval_tuple_term scope (List.map snd input_terms)) in
+        let output = lambda (eval_tuple_term scope (List.map snd output_terms)) in
+        let failure = "(fun " ^ input_pattern ^ " " ^ output_pattern
+          ^ " => " ^ print_public_failure (scope @ names) synthetic ^ ")" in
+        kind, signature, input, output, failure
+      in
+      let steps, final_env, witness_names =
+        List.fold_left (fun (steps, env, witnesses) (i, premise) ->
+          let scope = initial_scope @ List.map fst env in
+          let pattern = "()" in
+          let lambda body = "(fun " ^ pattern ^ " => " ^ body ^ ")" in
+          let step, env, witnesses = match premise with
+          | L.Holds application when has_signature application ->
+              let kind, signature, input, output, _ =
+                print_call i env application in
+              (match output_bindings application with
+              | names when names <> []
+                && List.for_all (fun name -> List.mem name produced) names ->
+                  let env_outputs = List.map (fun name ->
+                    name, List.assoc name rule.binders) names in
+                  let witness_term = eval_tuple_pattern names in
+                  (fun body -> "(SpecTecPlan.Plan."
+                    ^ (match kind with `Scoped | `Internal -> "bindCall "
+                        | `External -> "bindExternal ")
+                    ^ signature ^ " " ^ input ^ " (fun " ^ witness_term
+                    ^ " => " ^ body ^ "))"),
+                  env @ env_outputs, witnesses @ [witness_term]
+              | _ ->
+                  (fun body -> "(SpecTecPlan.Plan."
+                    ^ (match kind with `Scoped -> "callKnownScoped "
+                        | `Internal -> "callKnown "
+                        | `External -> "externalKnown ")
+                    ^ signature ^ " " ^ input ^ " " ^ output ^ " " ^ body ^ ")"),
+                  env, witnesses)
+          | L.NotHolds (application, _) when has_signature application ->
+              let kind, signature, input, output, failure =
+                print_call i env application in
+              (fun body -> "(SpecTecPlan.Plan."
+                ^ (match kind with `Scoped -> "negativeScoped "
+                    | `Internal -> "negative "
+                    | `External -> "externalNegative ")
+                ^ signature ^ " "
+                ^ (if kind = `External then failure ^ " " else "")
+                ^ input ^ " " ^ output ^ " " ^ body ^ ")"),
+                env, witnesses
+          | L.Prop (L.Predicate
+              (L.Native (("SpecTecFresh.Allocates" |
+                "_root_.SpecTecFresh.Allocates"),
+                [site; before; output; after]))) ->
+              (match output, after with
+              | L.Variable (output_name, _), L.Variable (after_name, _)
+                when List.mem output_name produced
+                  && List.mem after_name produced ->
+                  (fun body -> "(SpecTecPlan.Plan.bindFresh "
+                    ^ lambda (print_term scope site) ^ " "
+                    ^ lambda (print_term scope before) ^ " (fun "
+                    ^ print_identifier output_name ^ " " ^ print_identifier after_name
+                    ^ " => " ^ body ^ "))"),
+                  env @ [output_name, List.assoc output_name rule.binders;
+                    after_name, List.assoc after_name rule.binders],
+                  witnesses @ [print_identifier output_name;
+                    print_identifier after_name]
+              | _ ->
+                  (fun body -> "(SpecTecPlan.Plan.freshKnown "
+                    ^ lambda (print_term scope site) ^ " "
+                    ^ lambda (print_term scope before) ^ " "
+                    ^ lambda (print_term scope output) ^ " "
+                    ^ lambda (print_term scope after) ^ " " ^ body ^ ")"),
+                  env, witnesses)
+          | L.Holds _ | L.NotHolds _ | L.NotExists _ | L.Prop _ ->
+              (fun body -> "(SpecTecPlan.Plan.guard "
+                ^ lambda (print_local_side_premise scope premise)
+                ^ " " ^ body ^ ")"), env, witnesses
+          in
+          (steps @ [(fun body -> "(SpecTecPlan.Plan.at " ^ string_of_int i
+            ^ " " ^ step body ^ ")")], env, witnesses))
+          ([], initial, List.map (fun (name, _) -> print_identifier name) initial)
+          (List.mapi (fun i premise -> i, premise) rule.premises) in
+      let final_scope = initial_scope @ List.map fst final_env in
+      let final_pattern = "()" in
+      let head = print_atom component_relations final_scope rule.conclusion in
+      let body = "(SpecTecPlan.Plan.ret (fun " ^ final_pattern
+        ^ " => " ^ head ^ "))" in
+      let body = List.fold_right (fun step body -> step body) steps body in
+      let rec bind_initial scope = function
+        | [] -> body
+        | (binder, typ) :: rest ->
+            "(SpecTecPlan.Plan.bind (fun (" ^ print_identifier binder ^ " : "
+            ^ print_type scope typ ^ ") => "
+            ^ bind_initial (binder :: scope) rest ^ "))" in
+      let body = bind_initial initial_scope initial in
+      let recoverable = rule_recoverable name rule in
+      let declaration_text = "def " ^ plan_name
+        ^ print_wfs_parameters type_parameters equality_parameters print_parameters
+        ^ " : SpecTecPlan.Alternative Atom Unit :=\n  { sourceIndex := "
+        ^ string_of_int index ^ ", recoverable := ["
+        ^ String.concat ", " (List.map string_of_int recoverable)
+        ^ "], body := " ^ body ^ " }" in
+      let type_arguments = String.concat ""
+        (List.map (fun parameter -> " (" ^ print_identifier parameter
+          ^ " := " ^ print_identifier parameter ^ ")") type_parameters) in
+      let plan_ref = "(" ^ plan_name ^ type_arguments ^ ")" in
+      let compiled = "(" ^ plan_ref ^ ".body.compile () "
+        ^ plan_witness witness_names ^ ")" in
+      { plan_declaration = declaration_text;
+        plan_name; plan_owner = name; plan_rule = rule.name;
+        witness_pattern = plan_witness witness_names;
+        allowed_constructor = program_constructor (program_rule_name index)
+          type_parameters equality_parameters print_parameters [] head plan_ref;
+        plan_constructor = program_constructor (program_rule_name index)
+          type_parameters equality_parameters print_parameters rule.binders
+          head compiled }
+  | _ -> invalid_arg "expected relation"
+
+let print_plan_membership ~(component_index : int) (plans : local_plan_rule list) =
+  let constructors = List.map (fun plan -> plan.allowed_constructor) plans in
+  let allowed = if List.length constructors > 32 then
+    print_program_membership ~program_name:"Allowed"
+      ~index_type:"SpecTecPlan.Alternative Atom Unit"
+      ~tactic_name:("cases_allowed_" ^ string_of_int component_index) constructors
+    else "inductive Allowed : SpecTecPlan.Alternative Atom Unit → Prop where\n"
+      ^ String.concat "\n" (List.map (fun constructor ->
+          "  | " ^ constructor.constructor_name ^ constructor.constructor_parameters
+          ^ " : Allowed " ^ constructor.rule_index) constructors) in
+  let aliases = List.map (fun plan ->
+    "abbrev InProgram." ^ plan.allowed_constructor.constructor_name
+    ^ plan.allowed_constructor.constructor_parameters
+    ^ " := SpecTecPlan.ProgramOf.compiled (allowed := Allowed) (entry := ()) (Allowed."
+    ^ plan.allowed_constructor.constructor_name ^ " "
+    ^ plan.allowed_constructor.constructor_arguments ^ ")") plans in
+  String.concat "\n\n" (allowed ::
+    "abbrev InProgram : SpecTecWFS.Program Atom := SpecTecPlan.ProgramOf Allowed ()"
+    :: aliases)
+
+let print_boundary_plan ?(binder_types = []) (index : int) (type_parameters : string list)
+    (equality_parameters : string list) (print_parameters : string list)
+    (binders : (string * L.type_ref) list) (constructor : program_constructor)
+    (positive : string option) (side : string) : local_plan_rule =
+  let plan_name = constructor.constructor_name ^ "_plan" in
+  let pattern = plan_environment_pattern binders in
+  let ret = "(SpecTecPlan.Plan.ret (fun " ^ pattern ^ " => "
+    ^ constructor.constructor_head ^ "))" in
+  let body = match positive with
+    | Some atom -> "(SpecTecPlan.Plan.callKnownScoped "
+        ^ "({ Input := Unit, Output := Unit, inputPositions := [], policy := .nondeterministic, "
+        ^ "atom := fun " ^ pattern ^ " _ _ => " ^ atom
+        ^ " } : SpecTecPlan.ScopedSignature Atom _) (fun _ => ()) (fun _ => ()) " ^ ret ^ ")"
+    | None -> "(SpecTecPlan.Plan.guard (fun " ^ pattern ^ " => " ^ side ^ ") " ^ ret ^ ")" in
+  let body = List.fold_right (fun (name, typ) body ->
+    let typ = Option.value (List.assoc_opt name binder_types)
+      ~default:(print_type type_parameters typ) in
+    "(SpecTecPlan.Plan.choose (Value := " ^ typ
+    ^ ") " ^ body ^ ")") binders body in
+  let parameters = print_wfs_parameters type_parameters equality_parameters print_parameters in
+  let allowed = program_constructor constructor.constructor_name type_parameters
+    equality_parameters print_parameters [] constructor.constructor_head "" in
+  let plan_ref = "(" ^ plan_name ^ " " ^ allowed.constructor_arguments ^ ")" in
+  let witness_pattern = plan_witness (List.map (fun (name, _) -> print_identifier name) binders) in
+  { plan_name; plan_owner = ""; plan_rule = ""; witness_pattern;
+    plan_declaration = "def " ^ plan_name ^ parameters
+      ^ " : SpecTecPlan.Alternative Atom Unit :=\n  { sourceIndex := " ^ string_of_int index
+      ^ ", recoverable := [], body := " ^ body ^ " }";
+    allowed_constructor = { allowed with rule_index = plan_ref };
+    plan_constructor = { constructor with rule_index = "(" ^ plan_ref
+      ^ ".body.compile () " ^ witness_pattern ^ ")" } }
+
+let print_dispatch_plan relations members index declaration =
+  match declaration with
+  | L.Relation { name; type_parameters; equality_parameters; print_parameters;
+                 argument_types; _ } ->
+      let constructor = print_local_dispatch_constructor relations members index declaration in
+      let binders = List.mapi (fun i typ -> "arg" ^ string_of_int i, typ) argument_types in
+      let application = { L.target = L.Global name;
+        type_arguments = List.map (fun p -> L.TypeParameter p) type_parameters;
+        instance_arguments = []; print_instance_arguments = [];
+        arguments = List.map (fun (name, typ) -> L.Variable (name, typ)) binders } in
+      let positive = if StringSet.mem name members then
+        Some (print_atom relations type_parameters application) else None in
+      print_boundary_plan index type_parameters equality_parameters print_parameters
+        binders constructor positive (print_application type_parameters application)
   | _ -> invalid_arg "expected relation"
 
 let print_relation_local_program ~(atom_extern_relations : StringSet.t)
@@ -2247,7 +2570,15 @@ let print_relation_local_program ~(atom_extern_relations : StringSet.t)
     ~(model_relations : StringSet.t) (analysis : Relation_graph.analysis)
     (relations : L.declaration list) : string =
   let table = relation_table relations in
-  let print_component (component : Relation_graph.component) =
+  let owners = List.mapi (fun index (component : Relation_graph.component) ->
+    index, component.relations) analysis.components
+    |> List.fold_left (fun owners (index, names) -> List.fold_left
+         (fun owners name -> StringMap.add name index owners) owners names) StringMap.empty in
+  let external_signatures = List.fold_left (fun needed (edge : Relation_graph.edge) ->
+    if StringMap.find_opt edge.source owners = StringMap.find_opt edge.target owners
+    then needed else StringSet.add edge.target needed) StringSet.empty analysis.edges in
+  let print_component (component_index : int)
+      (component : Relation_graph.component) =
     let component_relations = List.map (fun name -> StringMap.find name table)
       component.relations in
     let members = StringSet.of_list component.relations in
@@ -2292,48 +2623,71 @@ let print_relation_local_program ~(atom_extern_relations : StringSet.t)
       ^ ", recursive := " ^ string_of_bool component.recursive
       ^ ", negativeCycle := " ^ string_of_bool component.negative_cycle
       ^ ", externalCallback := " ^ string_of_bool has_external_callback ^ " }" in
-    let constructors =
-      List.map (fun (index, relation, rule) ->
-        print_local_rule_constructor component_relations members index relation rule) rules
-      @ List.map (fun (index, declaration) ->
-          print_local_dispatch_constructor component_relations members index declaration) dispatch
-      @ if has_external_callback then
-          [ { constructor_name = "external_call";
-              constructor_parameters = " {α β : Type} (f : α → β → Prop) (input : α) (output : β)";
-              constructor_arguments = "(α := α) (β := β) f input output";
-              constructor_fields = "α β f input output";
-              constructor_head = "(" ^ explicit_atom "relation_call"
-                ^ " α β (_root_.SpecTecRelationRef.external f) input output)";
-              rule_index = "{ head := (" ^ explicit_atom "relation_call"
-                ^ " α β (_root_.SpecTecRelationRef.external f) input output), positive := [], negative := [], side := f input output }" } ]
-        else [] in
+    let plans = List.map (fun (index, relation, rule) ->
+      print_local_plan_rule relations component_relations members index relation rule)
+      rules in
+    let plans = plans @ List.map (fun (index, declaration) ->
+      print_dispatch_plan component_relations members index declaration) dispatch in
+    let plans = if not has_external_callback then plans else
+      let constructor = { constructor_name = "external_call";
+        constructor_parameters = " {α β : Type} (f : α → β → Prop) (input : α) (output : β)";
+        constructor_arguments = "(α := α) (β := β) f input output";
+        constructor_fields = "α β f input output";
+        constructor_head = "(" ^ explicit_atom "relation_call"
+          ^ " α β (_root_.SpecTecRelationRef.external f) input output)";
+        rule_index = "" } in
+      let binders = ["f", L.RelationType ([L.TypeParameter "α"], L.TypeParameter "β");
+        "input", L.TypeParameter "α"; "output", L.TypeParameter "β"] in
+      (* A callback value is a Lean predicate, not a named RelationRef. *)
+      let plan = print_boundary_plan ~binder_types:["f", "α → β → Prop"]
+        (List.length rules + List.length dispatch)
+        ["α"; "β"] [] [] binders constructor None "f input output" in
+      plans @ [plan] in
     let local = "namespace " ^ qualified ^ "\n\n"
       ^ print_atoms component_relations ^ "\n\n"
-      ^ print_local_membership constructors ^ "\n\n" ^ metadata
+      ^ String.concat "\n\n" (List.map (print_plan_signature component_relations) component_relations)
+      ^ "\n\n" ^ String.concat "\n\n" (List.map (fun plan -> plan.plan_declaration) plans)
+      ^ "\n\n"
+      ^ print_plan_membership ~component_index plans ^ "\n\n" ^ metadata
       ^ "\n\nend " ^ qualified in
     let public = List.map
       (print_local_public_relation qualified component.recursive component_relations)
       component_relations in
     let theorems = List.map (fun (index, relation, rule) ->
-      print_local_rule_theorem qualified component_relations members index relation rule) rules
+      print_local_rule_theorem qualified component_relations members index relation rule
+        (List.find (fun plan -> plan.plan_name = program_rule_name index ^ "_plan") plans)) rules
       @ List.map (fun (index, declaration) ->
           print_local_dispatch_theorem qualified members index declaration) dispatch in
+    let cases = List.map
+      (print_local_rule_cases qualified component_index members component_relations rules)
+      component_relations in
     let evaluators = component_relations
       |> List.filter (fun declaration ->
            emits_ordered_evaluator (relation_name declaration))
       |> List.map
-           (print_ordered_evaluator qualified relations component_relations members
+           (print_ordered_evaluator qualified component_relations plans
               component.recursive) in
     let notation = List.concat_map declaration_notation component_relations in
-    let body = String.concat "\n\n"
-      (local :: public @ theorems @ evaluators @ notation) in
-    if not needs_extern && not needs_model then body else
-      "section\n\n"
-      ^ (if needs_extern then "variable [SpecTecExternTypes]\n" else "")
-      ^ (if needs_model then "variable [SpecTecP4ExternModel]\n" else "")
-      ^ "\n" ^ body ^ "\n\nend"
+    let wrap body = if body = "" then "-- no declarations"
+      else if not needs_extern && not needs_model then body else
+        "section\n\n"
+        ^ (if needs_extern then "variable [SpecTecExternTypes]\n" else "")
+        ^ (if needs_model then "variable [SpecTecP4ExternModel]\n" else "")
+        ^ "\n" ^ body ^ "\n\nend" in
+    let marker kind boundary = "-- SpecTecModule:" ^ kind ^ ":"
+      ^ boundary ^ ":" ^ string_of_int component_index in
+    let semantics = String.concat "\n\n" (local :: public @ theorems) in
+    let evaluation = String.concat "\n\n" (evaluators
+      @ (component_relations |> List.filter (fun relation ->
+               StringSet.mem (relation_name relation) external_signatures)
+           |> List.map (print_external_signature qualified)) @ notation) in
+    let inversions = String.concat "\n\n" cases in
+    String.concat "\n\n" [
+      marker "sem" "begin"; wrap semantics; marker "sem" "end";
+      marker "eval" "begin"; wrap evaluation; marker "eval" "end";
+      marker "inv" "begin"; wrap inversions; marker "inv" "end" ]
   in
-  String.concat "\n\n" (List.map print_component analysis.components)
+  String.concat "\n\n" (List.mapi print_component analysis.components)
 
 let print ?(fresh_rollback = false) ?(relation_local = false) ?analysis
     (program : L.program) : string =
@@ -2454,6 +2808,7 @@ let print ?(fresh_rollback = false) ?(relation_local = false) ?analysis
   ^ (if relations = [] then "" else Wfs_backend.source ^ "\n\n"
      ^ if relation_local then Ordered_semantics.source ^ "\n\n" else "")
   ^ (if relation_local then Fresh_nominal.source ^ "\n\n" else "")
+  ^ (if relation_local && relations <> [] then Typed_rule_plan.source ^ "\n\n" else "")
   ^ "namespace SpecTec\n\n"
   ^ (if extern_types && not relation_local then
        "variable [SpecTecExternTypes]\n\n" else "")

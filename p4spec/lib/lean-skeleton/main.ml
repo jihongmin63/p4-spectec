@@ -14,6 +14,8 @@ type options = {
   case_range : (int * int) option;
   dump_relation_graph : bool;
   relation_roots : string list;
+  emit_modules : string option;
+  module_split_bytes : int option;
 }
 
 let usage =
@@ -21,7 +23,8 @@ let usage =
    [--case P4 EXPECTED | --reject-case P4 | --manifest TSV]... \
    [--case-range START COUNT] \
    [--dump-output P4 | --check-rejection P4 | --batch-cases PATHS | \
-    --dump-relation-graph] [--relation-root NAME]... \
+    --dump-relation-graph] [--relation-root NAME]... [--emit-modules DIR] \
+   [--module-split-bytes N] \
    [-I DIR]... <spec-path>..."
 
 let read_manifest path =
@@ -74,6 +77,13 @@ let parse_options arguments =
         loop { options with dump_relation_graph = true } rest
     | "--relation-root" :: name :: rest when name <> "" ->
         loop { options with relation_roots = name :: options.relation_roots } rest
+    | "--emit-modules" :: directory :: rest when directory <> "" ->
+        loop { options with emit_modules = Some directory } rest
+    | "--module-split-bytes" :: bytes :: rest ->
+        (match int_of_string_opt bytes with
+        | Some bytes when bytes > 0 ->
+            loop { options with module_split_bytes = Some bytes } rest
+        | _ -> Error "--module-split-bytes requires a positive integer")
     | "--obligations-only" :: rest ->
         loop { options with obligations_only = true } rest
     | "--case" :: path :: expected :: rest ->
@@ -100,7 +110,8 @@ let parse_options arguments =
         loop { options with includes_p4 = path :: options.includes_p4 } rest
     | ("--case" | "--reject-case" | "--manifest" | "--dump-output" |
        "--check-rejection" | "--batch-cases" | "--case-range" |
-       "--relation-root" | "-I") :: [] -> Error usage
+       "--relation-root" | "--emit-modules" |
+       "--module-split-bytes" | "-I") :: [] -> Error usage
     | argument :: _ when String.starts_with ~prefix:"-" argument ->
         Error ("Unknown option: " ^ argument ^ "\n" ^ usage)
     | path :: rest ->
@@ -110,7 +121,8 @@ let parse_options arguments =
          keep_going = false; fresh_exact_counter = false; fresh_rollback = false;
          obligations_only = false; dump_output = None;
          check_rejection = None; batch_cases = None; case_range = None;
-         dump_relation_graph = false; relation_roots = [] } arguments
+         dump_relation_graph = false; relation_roots = [];
+         emit_modules = None; module_split_bytes = None } arguments
 
 let read_expected path =
   try
@@ -336,6 +348,13 @@ let () =
   if options.relation_roots <> [] && options.keep_going then (
     prerr_endline "--relation-root cannot be combined with --keep-going";
     exit 2);
+  if options.emit_modules <> None &&
+     (options.fresh_exact_counter || options.fresh_rollback ||
+      options.keep_going || options.obligations_only ||
+      options.dump_relation_graph || options.dump_output <> None ||
+      options.check_rejection <> None || options.batch_cases <> None) then (
+    prerr_endline "--emit-modules requires default relation-local translation";
+    exit 2);
   if options.keep_going && options.cases <> [] && not options.obligations_only then (
     prerr_endline
       "--keep-going cannot emit case propositions; use --obligations-only";
@@ -437,7 +456,13 @@ let () =
       (Diagnostic.Render.render_report ~ansi:Diagnostic.Ansi.plain report);
   match result with
   | Ok (lean_code, _) ->
-      if lean_code <> "" then print_endline lean_code;
+      (match options.emit_modules with
+      | None -> if lean_code <> "" then print_endline lean_code
+      | Some directory ->
+          (try Module_writer.emit ?batch_bytes:options.module_split_bytes
+             ~directory lean_code
+           with Invalid_argument message | Sys_error message ->
+             prerr_endline message; exit 2));
       if List.exists (fun (diagnostic : Diagnostic.t) -> diagnostic.severity = Diagnostic.Error)
           (Diagnostic.Report.to_sorted_list report) then exit 1
   | Error _ -> exit 1
