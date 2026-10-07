@@ -13,10 +13,12 @@
   relation_optimizer
   relation_graph
   ordered_semantics
+  typed_rule_plan
   translator
   fresh_supply_lower
   order
   printer
+  module_writer
   pipeline
   case_obligation
   main)
