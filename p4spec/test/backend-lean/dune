@@ -83,6 +83,24 @@
  (deps (alias fresh-nominal-test)))
 
 (rule
+ (alias local-proof-support-test)
+ (deps check_local_proof_support.py local-proof-support.lean
+  relation-local.watsup ordered-eval.watsup output-search.watsup
+  ../../lib/lean-skeleton/SpecTecProof.lean)
+ (action
+  (run python3 %{dep:check_local_proof_support.py}
+   --exe %{exe:../../lib/lean-skeleton/main.exe}
+   --support %{dep:../../lib/lean-skeleton/SpecTecProof.lean}
+   --relation %{dep:relation-local.watsup}
+   --local-proof %{dep:local-proof-support.lean}
+   --ordered %{dep:ordered-eval.watsup}
+   --search %{dep:output-search.watsup})))
+
+(alias
+ (name backend-lean)
+ (deps (alias local-proof-support-test)))
+
+(rule
  (alias backend-lean)
  (deps check_fresh_case.py fresh-case.watsup fresh-case-proof.lean case-empty.p4)
  (action

@@ -4,6 +4,40 @@ import Lean
 namespace SpecTecProof
 open Lean Elab Command Meta
 
+/- Relation-local proof tools.  These tactics do not discover or traverse a
+global membership tree: the program is inferred from the supplied judgement
+or certificate, so `cases member` exposes only the owning SCC. -/
+
+syntax (name := specInvert)
+  "spec_invert " term " with " ident ident ident ident ident ident : tactic
+
+macro "spec_invert " proof:term " with " rule:ident member:ident head:ident
+    side:ident positive:ident negative:ident : tactic => do
+  /- The generated semantics is not in scope when this module is compiled.
+     Construct this identifier without a macro scope so it resolves at the
+     invocation site. -/
+  let casesName := mkIdent `SpecTecWFS.Holds.cases
+  `(tactic|
+    obtain ⟨$rule, $member, $head, $side, $positive, $negative⟩ :=
+      $casesName $proof)
+
+syntax (name := specInduction)
+  "spec_induction " term " with " ident ident ident ident ident : tactic
+
+macro "spec_induction " proof:term " with " rule:ident member:ident side:ident
+    positive:ident negative:ident : tactic => do
+  let soundName := mkIdent `SpecTecWFS.Holds.sound
+  `(tactic|
+    apply $soundName $proof <;>
+      intro $rule $member $side $positive $negative)
+
+syntax (name := specCheckCertificate)
+  "spec_check_certificate " term " using " term : tactic
+
+macro_rules
+  | `(tactic| spec_check_certificate $certificate using $checker) =>
+      `(tactic| exact $checker $certificate)
+
 /-- Prove an invariant of a translated program with bounded closure lemmas.
 
 Each handler receives `rule`, `member`, `_side`, `_positive`, and `_negative`.

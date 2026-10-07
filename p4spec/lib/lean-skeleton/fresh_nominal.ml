@@ -410,16 +410,17 @@ let audit_rule table summaries relation (rule : L.rule) =
 let audit (program : L.program) : (unit, string) result =
   let table = relation_table program in
   let summaries = fresh_summaries table in
-  let rec relations = function
-    | [] -> Ok ()
-    | L.Relation { name; rules; _ } :: rest ->
-        let rec rules_loop = function
-          | [] -> relations rest
-          | rule :: more ->
-              (match audit_rule table summaries name rule with
-              | Ok () -> rules_loop more
-              | Error _ as error -> error)
-        in rules_loop rules
-    | _ :: rest -> relations rest
-  in
-  relations (program |> List.concat_map declarations)
+  let failures = program |> List.concat_map declarations
+    |> List.concat_map (function
+         | L.Relation { name; rules; _ } ->
+             List.filter_map (fun rule ->
+               match audit_rule table summaries name rule with
+               | Ok () -> None
+               | Error message -> Some message) rules
+         | _ -> [])
+    |> List.sort_uniq String.compare in
+  match failures with
+  | [] -> Ok ()
+  | failures ->
+      Error (Printf.sprintf "%d unproved rendering observation(s):\n- %s"
+        (List.length failures) (String.concat "\n- " failures))

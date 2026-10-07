@@ -142,5 +142,54 @@ theorem Evaluation.ruleFailure_sound {Input : Type u₁} {Output : Type u₂}
   cases proof with
   | ruleFailure _ search => exact search.noSuccess
 
+theorem Evaluation.abort_sound {Input : Type u₁} {Output : Type u₂}
+    {Error : Type u₃} {Feature : Type u₄}
+    {selectedSucceeds publicSucceeds : Input → Output → Prop}
+    {allRulesFailed isUndetermined : Input → Prop}
+    [boundary : Boundary Input Error Feature]
+    {fuel input error}
+    (proof : Evaluation selectedSucceeds publicSucceeds allRulesFailed
+      isUndetermined fuel input (.abort error : Outcome Output Error Feature)) :
+    boundary.aborts input error := by
+  cases proof with
+  | abort boundaryProof => exact boundaryProof
+
+theorem Evaluation.unsupported_sound {Input : Type u₁} {Output : Type u₂}
+    {Error : Type u₃} {Feature : Type u₄}
+    {selectedSucceeds publicSucceeds : Input → Output → Prop}
+    {allRulesFailed isUndetermined : Input → Prop}
+    [boundary : Boundary Input Error Feature]
+    {fuel input feature}
+    (proof : Evaluation selectedSucceeds publicSucceeds allRulesFailed
+      isUndetermined fuel input
+        (.unsupported feature : Outcome Output Error Feature)) :
+    boundary.unsupported input feature := by
+  cases proof with
+  | unsupported boundaryProof => exact boundaryProof
+
+theorem Evaluation.timeout_fuel {Input : Type u₁} {Output : Type u₂}
+    {Error : Type u₃} {Feature : Type u₄}
+    {selectedSucceeds publicSucceeds : Input → Output → Prop}
+    {allRulesFailed isUndetermined : Input → Prop}
+    [Boundary Input Error Feature]
+    {fuel input}
+    (proof : Evaluation selectedSucceeds publicSucceeds allRulesFailed
+      isUndetermined fuel input (.timeout : Outcome Output Error Feature)) :
+    fuel = 0 := by
+  cases proof
+  rfl
+
+theorem Evaluation.undetermined_sound {Input : Type u₁} {Output : Type u₂}
+    {Error : Type u₃} {Feature : Type u₄}
+    {selectedSucceeds publicSucceeds : Input → Output → Prop}
+    {allRulesFailed isUndetermined : Input → Prop}
+    [Boundary Input Error Feature]
+    {fuel input}
+    (proof : Evaluation selectedSucceeds publicSucceeds allRulesFailed
+      isUndetermined fuel input (.undetermined : Outcome Output Error Feature)) :
+    isUndetermined input := by
+  cases proof with
+  | undetermined evidence => exact evidence
+
 end SpecTecEval
 |lean}

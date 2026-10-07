@@ -34,14 +34,35 @@ The old global program is retained only in explicit compatibility modes:
 
 Generated source begins with a mode marker. The test suite passes the exact-counter option explicitly for legacy global proofs and size/split checks; default-mode locality and legacy reproducibility are tested separately.
 
-Each leaf of the bounded `InProgram` tree has a shared `head_property` theorem.
-The optional `SpecTecProof.lean` module provides `spec_invariant`: it builds
-closure lemmas for the tree and reuses `head_property` when the invariant
-reduces to `True` on every head of a leaf. Other leaves use the supplied
-`default` tactic; explicit leaf handlers take precedence. `using known_sound`
-makes a previously proved invariant available on positive premises. Negative
-premises retain `SpecTecWFS.Fails`, and the command rejects extra axioms.
-Generation size checks include these common proof lemmas.
+Each local component has a `head_property` theorem.  The optional
+`SpecTecProof.lean` module provides `spec_invert` and `spec_induction`; the
+component is inferred from the supplied proof, so splitting its membership
+exposes only the owning relation/SCC.  `spec_check_certificate` applies a typed
+checker to an evaluator certificate.  The legacy `spec_invariant` command is
+retained for explicit global compatibility modes; it builds bounded closure
+lemmas, preserves `SpecTecWFS.Fails` on negative premises, and rejects
+unapproved axioms.
+
+The default evaluator runs source premises left-to-right through a shared
+`Prefix`.  Outcomes distinguish `success`, universal `ruleFailure`, `abort`,
+`unsupported`, zero-fuel `timeout`, and SCC-local `undetermined`.  Only a
+recoverable premise position may select the next source alternative.  A call
+with an unknown output needs an `OutputSearchFailure` quantified over every
+candidate; one failed candidate is not rejection evidence.  Generated
+`success_sound`, `ruleFailure_sound`, `abort_sound`, `unsupported_sound`,
+`timeout_sound`, and `undetermined_sound` theorems expose exactly the evidence
+carried by each outcome.  They do not add a determinism assumption.
+
+The default fresh interface defines tagged `FreshId`/`FreshName`, allocation
+sites, branch rollback/commit, protected-name rendering certificates, and one
+whole-output `FreshNominalAlphaIR` bijection.  The static audit rejects a
+fresh-derived string operation when the nominal model lacks a rendering
+compatibility proof.  Equality used for binding, scope, and capture avoidance
+is nominal; concatenation, lexical ordering, printed control, and sorted sets
+are rendering-sensitive.  The current implementation is intentionally
+incomplete: dynamic evaluator supply threading and extraction of protected
+names from actual inputs/contexts are not yet connected to full generated
+executions.
 
 The `--fresh-exact-counter` compatibility model reproduces the interpreter's
 counter, including allocations in failed clauses. `--fresh-rollback` selects a proof abstraction:
@@ -188,10 +209,16 @@ nonmatch; syntax errors and interpreter aborts fail the check. Without
 specification. The resulting Lean file can then be extended with proof
 theorems for the generated `case_N` propositions.
 
-At present, strict translation of the full `spec` directory stops at the
-stateful builtin `$fresh_typeId`, so the corpus propositions can be generated
-but cannot yet be type-checked together with a complete Lean translation of
-`Program_ok`. `--keep-going` is therefore disallowed with cases: it can omit
-`Program_ok` and produce dangling propositions. The small
+At present, the default translation of the full `spec` directory stops at one
+explicit rendering obligation: fresh-derived text reaches `$concat_text` in
+`DirectApplicationStmt_inst` while constructing `typeId ++ "_" ++ fresh`.
+The audit reports every such unproved observation; it does not silently change
+string semantics or fall back to a legacy mode.  Consequently the corpus
+propositions can be generated with `--obligations-only`, but cases 0, 1, and 5
+have not been verified against a complete default-mode `Program_ok` module.
+The measured status and reproducer are under
+`experiments/cases-0-1-5/RELATION_LOCAL_RESULTS.md`.  `--keep-going` remains
+disallowed with cases because it can omit `Program_ok` and produce dangling
+propositions. The small
 `case-obligation.watsup` fixture in `p4spec/test/backend-lean` exercises the
 complete parse, translate, proposition, and Lean type-checking path.

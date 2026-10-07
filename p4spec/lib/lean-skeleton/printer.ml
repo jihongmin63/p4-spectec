@@ -2304,6 +2304,30 @@ let print_ordered_evaluator (qualified : string) (all_relations : L.declaration 
         ^ ".eval fuel input (.ruleFailure)) :\n    ∀ output, ¬ "
         ^ print_identifier name ^ ".evalSucceeds input output :=\n  "
         ^ "SpecTecEval.Evaluation.ruleFailure_sound proof" in
+      let boundary_parameters = wfs_parameters ^ boundary
+        ^ " {fuel : _root_.Nat} {input : " ^ input_ref ^ "}" in
+      let abort_sound = "theorem " ^ print_identifier name ^ ".abort_sound"
+        ^ boundary_parameters ^ " {error : _root_.String}\n    (proof : "
+        ^ print_identifier name ^ ".eval fuel input (.abort error)) :\n    "
+        ^ "SpecTecEval.Boundary.aborts (Input := " ^ input_ref
+        ^ ") (Error := _root_.String) (Feature := _root_.String) input error :=\n  "
+        ^ "SpecTecEval.Evaluation.abort_sound proof" in
+      let unsupported_sound = "theorem " ^ print_identifier name
+        ^ ".unsupported_sound" ^ boundary_parameters
+        ^ " {feature : _root_.String}\n    (proof : " ^ print_identifier name
+        ^ ".eval fuel input (.unsupported feature)) :\n    "
+        ^ "SpecTecEval.Boundary.unsupported (Input := " ^ input_ref
+        ^ ") (Error := _root_.String) (Feature := _root_.String) input feature :=\n  "
+        ^ "SpecTecEval.Evaluation.unsupported_sound proof" in
+      let timeout_sound = "theorem " ^ print_identifier name ^ ".timeout_sound"
+        ^ boundary_parameters ^ "\n    (proof : " ^ print_identifier name
+        ^ ".eval fuel input (.timeout)) : fuel = 0 :=\n  "
+        ^ "SpecTecEval.Evaluation.timeout_fuel proof" in
+      let undetermined_sound = "theorem " ^ print_identifier name
+        ^ ".undetermined_sound" ^ boundary_parameters ^ "\n    (proof : "
+        ^ print_identifier name ^ ".eval fuel input (.undetermined)) :\n    "
+        ^ print_identifier name ^ ".evalUndetermined input :=\n  "
+        ^ "SpecTecEval.Evaluation.undetermined_sound proof" in
       let timeout = "theorem " ^ print_identifier name ^ ".timeout"
         ^ wfs_parameters ^ boundary ^ " (input : " ^ input_ref ^ ") :\n    "
         ^ print_identifier name ^ ".eval 0 input (.timeout) :=\n  "
@@ -2312,7 +2336,8 @@ let print_ordered_evaluator (qualified : string) (all_relations : L.declaration 
         ([ input_alias; output_alias; succeeds; fresh_sites_declaration ]
          @ List.map (fun flow -> flow.declarations) flows
          @ [ all_failed; selected; selected_sound; undetermined; eval;
-             success_sound; failure_sound; timeout ])
+             success_sound; failure_sound; abort_sound; unsupported_sound;
+             timeout_sound; undetermined_sound; timeout ])
   | _ -> invalid_arg "expected relation"
 
 let print_relation_local_program ~(atom_extern_relations : StringSet.t)
