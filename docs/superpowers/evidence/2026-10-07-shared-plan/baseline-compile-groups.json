@@ -1,0 +1,34 @@
+{
+  "core_support": {
+    "modules": 2,
+    "wall_s": 145.57980871014297,
+    "user_s": 176.571056,
+    "system_s": 2.0128269999999997,
+    "peak_rss_kib": 3763836,
+    "olean_bytes": 139152568
+  },
+  "scc_evaluator": {
+    "modules": 270,
+    "wall_s": 2119.7962037744,
+    "user_s": 2636.0470819999996,
+    "system_s": 34.39072899999999,
+    "peak_rss_kib": 4449480,
+    "olean_bytes": 1308642024
+  },
+  "entrypoints": {
+    "modules": 3,
+    "wall_s": 1.120998902246356,
+    "user_s": 0.89122,
+    "system_s": 0.224796,
+    "peak_rss_kib": 1573684,
+    "olean_bytes": 4208
+  },
+  "inversion": {
+    "modules": 18,
+    "wall_s": 952.2094104541466,
+    "user_s": 1538.4285009999999,
+    "system_s": 7.385012999999999,
+    "peak_rss_kib": 4437944,
+    "olean_bytes": 957307224
+  }
+}

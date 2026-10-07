@@ -1,0 +1,18 @@
+{
+  "exit": 0,
+  "wall_s": 37.14611164666712,
+  "user_s": 36.370673,
+  "system_s": 0.773971,
+  "peak_rss_kib": 987604,
+  "cpus": [
+    2,
+    3
+  ],
+  "command": [
+    "/tmp/p4-plan-compaction/baseline-generator",
+    "--emit-modules",
+    "/tmp/p4-plan-compaction/baseline-generation-pinned",
+    "spec"
+  ],
+  "executable_sha256": "8107af7ec1d9e5efa1b30dbd0a248dbda1938b757e63dd5c3c85156094c00946"
+}

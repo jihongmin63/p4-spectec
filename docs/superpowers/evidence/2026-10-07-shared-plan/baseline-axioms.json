@@ -1,0 +1,12 @@
+{
+  "module": "AxiomBaseline",
+  "against": "baseline-fixed",
+  "exit": 0,
+  "wall_s": 1.3367936555296183,
+  "user_s": 1.1368719999999999,
+  "system_s": 0.19880199999999998,
+  "peak_rss_kib": 2735852,
+  "source_bytes": 697,
+  "source_lines": 17,
+  "olean_bytes": 2648
+}
