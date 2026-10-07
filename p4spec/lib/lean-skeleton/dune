@@ -8,6 +8,7 @@
   extern_model
   wfs_backend
   identifier
+  relation_optimizer
   translator
   order
   printer

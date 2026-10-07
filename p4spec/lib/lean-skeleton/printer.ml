@@ -2,6 +2,8 @@ module L = Ast.Lean
 
 let extern_types_active = ref false
 let atom_has_extern_types = ref false
+let program_has_p4_extern_model = ref false
+let program_has_extern_types = ref false
 let model_relation_names : string list ref = ref []
 
 let print_identifier (name : string) : string = Identifier.print_identifier name
@@ -245,7 +247,9 @@ let rec print_term (bound : string list) (term : L.term) : string =
           (("@" ^ print_constructor_ref bound reference)
           :: (List.map (print_type bound) reference.type_arguments
              @ List.map print arguments)) ^ ")"
-  | Boolean value -> string_of_bool value
+  | Boolean value ->
+      let name = string_of_bool value in
+      if List.mem name bound then "_root_.Bool." ^ name else name
   | Number (value, typ) -> "(" ^ value ^ " : " ^ print_type bound typ ^ ")"
   | Text value -> "\"" ^ escape_string value ^ "\""
   | FunctionReference (Global name) ->
@@ -288,7 +292,8 @@ and print_prop (bound : string list) (prop : L.prop) : string =
   | Membership (element, collection) ->
       "(" ^ print_term bound element ^ " ∈ " ^ print_term bound collection ^ ")"
 
-  | IsTrue term -> "(" ^ print_term bound term ^ " = true)"
+  | IsTrue term -> "(" ^ print_term bound term ^ " = "
+      ^ print_term bound (L.Boolean true) ^ ")"
   | Predicate term -> print_term bound term
   | Not prop -> "(¬ " ^ print_prop bound prop ^ ")"
   | And (left, right) -> print_connective bound "∧" left right
@@ -314,8 +319,11 @@ and print_application (bound : string list) (application : L.application) : stri
         "@" ^ name
         ^ (match application.target with
            | L.Global relation
-             when !atom_has_extern_types && List.mem relation !model_relation_names ->
-               " (inferInstance : _root_.SpecTecExternTypes)"
+             when List.mem relation !model_relation_names ->
+               (if !program_has_extern_types then
+                  " (inferInstance : _root_.SpecTecExternTypes)" else "")
+               ^ (if !program_has_p4_extern_model then
+                    " (inferInstance : _root_.SpecTec.SpecTecP4ExternModel)" else "")
            | _ -> "")
   in
   let arguments : string list =
@@ -1203,7 +1211,7 @@ let print_wfs_binders (bound : string list) (binders : (string * L.type_ref) lis
          " (" ^ print_identifier name ^ " : " ^ print_type bound typ ^ ")")
        binders)
 
-let print_atom_constructor (declaration : L.declaration) : string =
+let print_atom_constructor ?(result = "Atom") (declaration : L.declaration) : string =
   match declaration with
   | Relation { name; type_parameters; equality_parameters; print_parameters;
                argument_types; _ } ->
@@ -1225,13 +1233,180 @@ let print_atom_constructor (declaration : L.declaration) : string =
       in
       let signature : string =
         String.concat " → "
-          (List.map (print_type type_parameters) argument_types @ [ "Atom" ])
+          (List.map (print_type type_parameters) argument_types @ [ result ])
       in
       "  | " ^ print_identifier name ^ parameters ^ " : " ^ signature
   | _ -> invalid_arg "expected relation"
 
+(* Lean builds expensive auxiliary declarations for wide inductives. Keep
+   polymorphic constructors real constructors: match_pattern abbreviations make
+   implicit fields inaccessible in patterns (notably DecidableEq instances).
+   Pack the remaining constructors in a bounded-width tree. The root necessarily
+   retains all polymorphic constructors to preserve that pattern API. *)
+let print_atoms (relations : L.declaration list) : string =
+  let root_width = 128 in
+  let width = 32 in
+  let call = "  | relation_call {α β : Type} : _root_.SpecTecRelationRef α β → α → β → Atom" in
+  let flat () =
+    "inductive Atom : Type 1 where\n"
+    ^ String.concat "\n" (List.map print_atom_constructor relations @ [call])
+  in
+  if List.length relations + 1 <= root_width then flat () else
+  let polymorphic, monomorphic = List.partition
+    (function L.Relation { type_parameters; _ } -> type_parameters <> []
+      | _ -> invalid_arg "expected relation") relations in
+  if monomorphic = [] then flat () else
+  let rec take n acc rest = match n, rest with
+    | 0, _ | _, [] -> List.rev acc, rest
+    | _, x :: xs -> take (n - 1) (x :: acc) xs
+  in
+  let rec chunks = function
+    | [] -> []
+    | xs -> let first, rest = take width [] xs in first :: chunks rest
+  in
+  let group_name level index =
+    print_identifier ("Atom:" ^ string_of_int level ^ ":" ^ string_of_int index)
+  in
+  let wrap_name index = print_identifier ("group:" ^ string_of_int index) in
+  let parameters = if !atom_has_extern_types then " [SpecTecExternTypes]" else "" in
+  let extern_argument = if !atom_has_extern_types then
+      " (inferInstance : _root_.SpecTecExternTypes)" else "" in
+  let declare name constructors =
+    "inductive " ^ name ^ parameters ^ " : Type 1 where\n"
+    ^ String.concat "\n" constructors
+  in
+  let arguments = function
+    | L.Relation { argument_types; _ } ->
+        List.mapi (fun i _ -> "atomArg" ^ string_of_int i) argument_types
+    | _ -> invalid_arg "expected relation"
+  in
+  let leaves = List.mapi (fun i members ->
+    let name = group_name 0 i in
+    let aliases = List.map (fun relation ->
+      relation, String.concat " "
+        (("@" ^ name ^ "." ^ print_identifier (relation_name relation)
+          ^ extern_argument) :: arguments relation)) members in
+    declare name (List.map (print_atom_constructor ~result:name) members),
+    (name, aliases)) (chunks monomorphic) in
+  let wrap parent children =
+    List.mapi (fun i (name, aliases) ->
+      let ctor = wrap_name i in
+      "  | " ^ ctor ^ " : " ^ name ^ " → " ^ parent,
+      List.map (fun (relation, payload) ->
+        relation, parent ^ "." ^ ctor ^ " (" ^ payload ^ ")") aliases) children
+    |> List.split
+  in
+  let capacity = max 1 (root_width - List.length polymorphic - 1) in
+  let rec pack level nodes =
+    if List.length nodes <= capacity then [], nodes else
+    let groups = List.mapi (fun i children ->
+      let name = group_name level i in
+      let constructors, aliases = wrap name children in
+      declare name constructors, (name, List.concat aliases)) (chunks nodes) in
+    let definitions, roots = pack (level + 1) (List.map snd groups) in
+    List.map fst groups @ definitions, roots
+  in
+  let branches, roots = pack 1 (List.map snd leaves) in
+  let constructors, aliases = wrap "Atom" roots in
+  let print_alias (relation, payload) = match relation with
+    | L.Relation { name; argument_types; _ } ->
+        let signature = String.concat " → "
+          (List.map (print_type []) argument_types @ ["Atom"]) in
+        let body = match arguments relation with
+          | [] -> payload
+          | args -> "fun " ^ String.concat " " args ^ " => " ^ payload in
+        "@[match_pattern] abbrev Atom." ^ print_identifier name ^ " : "
+        ^ signature ^ " := " ^ body
+    | _ -> invalid_arg "expected relation"
+  in
+  String.concat "\n\n"
+    (List.map fst leaves @ branches
+     @ ["inductive Atom : Type 1 where\n"
+        ^ String.concat "\n" (List.map print_atom_constructor polymorphic @ [call] @ constructors)]
+     @ List.map print_alias (List.concat aliases))
+
+type program_constructor = {
+  constructor_name : string;
+  constructor_parameters : string;
+  constructor_arguments : string;
+  rule_index : string;
+}
+
+let program_constructor name type_parameters equality_parameters print_parameters
+    binders rule_index : program_constructor =
+  let bound = type_parameters @ List.map fst binders in
+  { constructor_name = name;
+    constructor_parameters =
+      print_wfs_parameters type_parameters equality_parameters print_parameters
+      ^ print_wfs_binders bound binders;
+    constructor_arguments = String.concat " "
+      (List.map (fun name -> "(" ^ print_identifier name ^ " := "
+          ^ print_identifier name ^ ")") type_parameters
+       @ List.map (fun (name, _) -> print_identifier name) binders);
+    rule_index }
+
+(* All levels are uniform: cases_in_program peels one wrapper per level,
+   then leaves the individual rule cases for the caller's next tactic. *)
+let print_program_membership (constructors : program_constructor list) : string =
+  let width = 32 in
+  let rec take n acc rest = match n, rest with
+    | 0, _ | _, [] -> List.rev acc, rest
+    | _, x :: xs -> take (n - 1) (x :: acc) xs in
+  let rec chunks = function
+    | [] -> []
+    | xs -> let first, rest = take width [] xs in first :: chunks rest in
+  let group_name level index = print_identifier
+    ("InProgram:" ^ string_of_int level ^ ":" ^ string_of_int index) in
+  let declare name body =
+    "inductive " ^ name ^ " : SpecTecWFS.Rule Atom → Prop where\n"
+    ^ String.concat "\n" body in
+  let print_constructor name constructor =
+    "  | " ^ constructor.constructor_name ^ constructor.constructor_parameters
+    ^ " : " ^ name ^ " " ^ constructor.rule_index in
+  let tactic depth =
+    "macro \"cases_in_program\" h:Lean.Parser.Tactic.elimTarget : tactic =>\n"
+    ^ "  `(tactic| (cases $h"
+    ^ String.concat "" (List.init depth (fun _ ->
+        " <;> (rename_i programPart; cases programPart)")) ^ "))" in
+  if List.length constructors <= width then
+    declare "InProgram" (List.map (print_constructor "InProgram") constructors)
+    ^ "\n\n" ^ tactic 0
+  else
+  let leaves = List.mapi (fun i members ->
+    let name = group_name 0 i in
+    let aliases = List.map (fun constructor -> constructor,
+      name ^ "." ^ constructor.constructor_name
+      ^ (if constructor.constructor_arguments = "" then ""
+         else " " ^ constructor.constructor_arguments)) members in
+    declare name (List.map (print_constructor name) members), (name, aliases))
+    (chunks constructors) in
+  let wrap parent children =
+    List.mapi (fun i (name, aliases) ->
+      let ctor = print_identifier ("group:" ^ string_of_int i) in
+      "  | " ^ ctor ^ " {rule : SpecTecWFS.Rule Atom} : "
+      ^ name ^ " rule → " ^ parent ^ " rule",
+      List.map (fun (constructor, payload) ->
+        constructor, parent ^ "." ^ ctor ^ " (" ^ payload ^ ")") aliases) children
+    |> List.split in
+  let rec pack level nodes =
+    if List.length nodes <= width then [], nodes, level else
+    let groups = List.mapi (fun i children ->
+      let name = group_name level i in
+      let body, aliases = wrap name children in
+      declare name body, (name, List.concat aliases)) (chunks nodes) in
+    let definitions, roots, depth = pack (level + 1) (List.map snd groups) in
+    List.map fst groups @ definitions, roots, depth in
+  let branches, roots, depth = pack 1 (List.map snd leaves) in
+  let body, aliases = wrap "InProgram" roots in
+  String.concat "\n\n"
+    (List.map fst leaves @ branches @ [declare "InProgram" body]
+     @ List.map (fun (constructor, payload) ->
+       "abbrev InProgram." ^ constructor.constructor_name
+       ^ constructor.constructor_parameters ^ " := " ^ payload) (List.concat aliases)
+     @ [tactic depth])
+
 let print_dispatch_constructor (relations : L.declaration list) (index : int)
-    (declaration : L.declaration) : string =
+    (declaration : L.declaration) : program_constructor =
   match declaration with
   | Relation { name; type_parameters; equality_parameters; print_parameters;
                argument_types; _ } ->
@@ -1249,28 +1424,25 @@ let print_dispatch_constructor (relations : L.declaration list) (index : int)
       (match reversed with
       | result :: reversed_inputs ->
           let inputs = List.rev reversed_inputs in
-          let binders =
-            List.mapi (fun i typ -> " (arg" ^ string_of_int i ^ " : "
-              ^ print_type type_parameters typ ^ ")") argument_types
-            |> String.concat ""
-          in
-          "  | " ^ program_rule_name index
-          ^ print_wfs_parameters type_parameters equality_parameters print_parameters
-          ^ binders
-          ^ " : InProgram { head := (" ^ explicit_atom "relation_call" ^ " _ _ "
-          ^ "(_root_.SpecTecRelationRef.named \"" ^ escape_string name ^ "\") "
-          ^ print_call_tuple type_parameters inputs ^ " "
-          ^ print_term type_parameters result ^ "), positive := ["
-          ^ print_atom relations type_parameters application
-          ^ "], negative := [], side := _root_.True }"
+          let binders = List.mapi (fun i typ -> "arg" ^ string_of_int i, typ)
+            argument_types in
+          program_constructor (program_rule_name index)
+            type_parameters equality_parameters print_parameters binders
+            ("{ head := (" ^ explicit_atom "relation_call" ^ " _ _ "
+             ^ "(_root_.SpecTecRelationRef.named \"" ^ escape_string name ^ "\") "
+             ^ print_call_tuple type_parameters inputs ^ " "
+             ^ print_term type_parameters result ^ "), positive := ["
+             ^ print_atom relations type_parameters application
+             ^ "], negative := [], side := _root_.True }")
       | [] -> invalid_arg ("relation has no output: " ^ name))
   | _ -> invalid_arg "expected relation"
 
-let print_dispatch_theorem (_relations : L.declaration list) (index : int)
+let print_dispatch_theorem ~(scope : string list) (_relations : L.declaration list) (index : int)
     (declaration : L.declaration) : string =
   match declaration with
   | Relation { name; type_parameters; equality_parameters; print_parameters;
                argument_types; _ } ->
+      let bound = scope @ type_parameters in
       let arguments : L.term list =
         List.mapi (fun i typ -> L.Variable ("arg" ^ string_of_int i, typ))
           argument_types
@@ -1287,19 +1459,19 @@ let print_dispatch_theorem (_relations : L.declaration list) (index : int)
       in
       let binders =
         List.mapi (fun i typ -> " (arg" ^ string_of_int i ^ " : "
-          ^ print_type type_parameters typ ^ ")") argument_types
+          ^ print_type bound typ ^ ")") argument_types
         |> String.concat ""
       in
       let call =
         "(" ^ explicit_atom "relation_call" ^ " _ _ (_root_.SpecTecRelationRef.named \""
         ^ escape_string name ^ "\") "
-        ^ print_call_tuple type_parameters (List.rev reversed_inputs)
-        ^ " " ^ print_term type_parameters result ^ ")"
+        ^ print_call_tuple bound (List.rev reversed_inputs)
+        ^ " " ^ print_term bound result ^ ")"
       in
-      "theorem dispatch"
+      "theorem " ^ print_identifier name ^ ".dispatch"
       ^ print_wfs_parameters type_parameters equality_parameters print_parameters
       ^ binders ^ " (proof : SpecTecWFS.Holds InProgram "
-      ^ print_atom _relations type_parameters application
+      ^ print_atom _relations bound application
       ^ ") : SpecTecWFS.Holds InProgram " ^ call ^ " := by\n"
       ^ "  exact SpecTecWFS.Holds.rule _ (InProgram."
       ^ program_rule_name index ^ " "
@@ -1309,14 +1481,13 @@ let print_dispatch_theorem (_relations : L.declaration list) (index : int)
   | _ -> invalid_arg "expected relation"
 
 let print_in_program_constructor (relations : L.declaration list) (index : int)
-    (declaration : L.declaration) (rule : L.rule) : string =
+    (declaration : L.declaration) (rule : L.rule) : program_constructor =
   match declaration with
   | Relation { type_parameters; equality_parameters; print_parameters; _ } ->
       let bound : string list = type_parameters @ List.map fst rule.binders in
-      "  | " ^ program_rule_name index
-      ^ print_wfs_parameters type_parameters equality_parameters print_parameters
-      ^ print_wfs_binders bound rule.binders
-      ^ " : InProgram " ^ print_wfs_rule relations bound rule
+      program_constructor (program_rule_name index)
+        type_parameters equality_parameters print_parameters rule.binders
+        (print_wfs_rule relations bound rule)
   | _ -> invalid_arg "expected relation"
 
 let print_wfs_premise (relations : L.declaration list) (bound : string list)
@@ -1333,11 +1504,11 @@ let rec all_proof (names : string list) : string =
   | [] -> "trivial"
   | name :: rest -> "⟨" ^ name ^ ", " ^ all_proof rest ^ "⟩"
 
-let print_wfs_rule_theorem (relations : L.declaration list) (index : int)
+let print_wfs_rule_theorem ~(scope : string list) (relations : L.declaration list) (index : int)
     (declaration : L.declaration) (rule : L.rule) : string =
   match declaration with
-  | Relation { type_parameters; equality_parameters; print_parameters; _ } ->
-      let bound : string list = type_parameters @ List.map fst rule.binders in
+  | Relation { name; type_parameters; equality_parameters; print_parameters; _ } ->
+      let bound : string list = scope @ type_parameters @ List.map fst rule.binders in
       let assumptions : string list =
         List.mapi
           (fun index premise ->
@@ -1366,16 +1537,15 @@ let print_wfs_rule_theorem (relations : L.declaration list) (index : int)
       let binder_arguments : string =
         String.concat "" (List.map (fun (name, _) -> " " ^ print_identifier name) rule.binders)
       in
-      "theorem " ^ print_identifier rule.name
+      "theorem " ^ print_identifier name ^ "." ^ print_identifier rule.name
       ^ print_wfs_parameters type_parameters equality_parameters print_parameters
       ^ print_wfs_binders bound rule.binders
       ^ String.concat "" assumptions
-      ^ " : " ^ print_application bound rule.conclusion ^ " := by\n"
-      ^ "  exact SpecTecWFS.Holds.rule (" ^ print_wfs_rule relations bound rule ^ ")\n"
-      ^ "    (InProgram." ^ program_rule_name index ^ binder_arguments ^ ")\n"
-      ^ "    (" ^ all_proof side ^ ")\n"
-      ^ "    (" ^ all_proof positive ^ ")\n"
-      ^ "    (" ^ all_proof negative ^ ")"
+      ^ " : " ^ print_application bound rule.conclusion ^ " :=\n"
+      (* The constructor's index already contains the complete rule. Let Lean
+         infer it instead of printing that large record a second time. *)
+      ^ "  SpecTecWFS.Holds.rule _ (InProgram." ^ program_rule_name index ^ binder_arguments ^ ")\n"
+      ^ "    (" ^ all_proof side ^ ") (" ^ all_proof positive ^ ") (" ^ all_proof negative ^ ")"
   | _ -> invalid_arg "expected relation"
 
 let print_wfs_relation (relations : L.declaration list)
@@ -1445,30 +1615,28 @@ let print_wfs_program (relations : L.declaration list) : string =
       named_relations
   in
   String.concat "\n\n"
-    ([ "inductive Atom : Type 1 where\n"
-       ^ String.concat "\n"
-           (List.map print_atom_constructor relations
-            @ ["  | relation_call {α β : Type} : _root_.SpecTecRelationRef α β → α → β → Atom"]);
-       "inductive InProgram : SpecTecWFS.Rule Atom → Prop where\n"
-       ^ String.concat "\n"
-           (List.map
-              (fun (index, relation, rule) ->
-                print_in_program_constructor relations index relation rule)
-              rules
-            @ List.map
-                (fun (index, declaration) ->
-                  print_dispatch_constructor relations index declaration)
-                dispatch
-            @ ["  | external_call {α β : Type} (f : α → β → Prop) (input : α) (output : β) : InProgram { head := (" ^ explicit_atom "relation_call" ^ " α β (_root_.SpecTecRelationRef.external f) input output), positive := [], negative := [], side := f input output }"]) ]
+    ([ print_atoms relations;
+       print_program_membership
+         (List.map (fun (index, relation, rule) ->
+              print_in_program_constructor relations index relation rule) rules
+          @ List.map (fun (index, declaration) ->
+              print_dispatch_constructor relations index declaration) dispatch
+          @ [{ constructor_name = "external_call";
+               constructor_parameters = " {α β : Type} (f : α → β → Prop) (input : α) (output : β)";
+               constructor_arguments = "(α := α) (β := β) f input output";
+               rule_index = "{ head := (" ^ explicit_atom "relation_call" ^ " α β (_root_.SpecTecRelationRef.external f) input output), positive := [], negative := [], side := f input output }" }]) ]
     @ List.map (print_wfs_relation relations) relations
     @ List.concat_map
         (fun relation ->
           let name : string = relation_name relation in
+          let scope = "dispatch" :: (match relation with
+            | L.Relation { rules; _ } -> List.map (fun (rule : L.rule) -> rule.name) rules
+            | _ -> []) in
           let theorems : string list =
             List.filter_map
               (fun (index, owner, rule) ->
                 if relation_name owner = name then
-                  Some (print_wfs_rule_theorem relations index owner rule)
+                  Some (print_wfs_rule_theorem ~scope relations index owner rule)
                 else None)
               rules
           in
@@ -1477,15 +1645,13 @@ let print_wfs_program (relations : L.declaration list) : string =
             List.filter_map
               (fun (index, owner) ->
                 if relation_name owner = name then
-                  Some (print_dispatch_theorem relations index owner)
+                  Some (print_dispatch_theorem ~scope relations index owner)
                 else None)
               dispatch
           in
-          (if theorems = [] then []
-           else [ "namespace " ^ print_identifier name ^ "\n\n"
-                  ^ String.concat "\n\n" theorems ^ "\n\nend "
-                  ^ print_identifier name ])
-          @ declaration_notation relation)
+          (* Qualified declarations preserve the public names without two
+             namespace commands and their snapshots for every relation. *)
+          theorems @ declaration_notation relation)
         relations)
 
 let print (program : L.program) : string =
@@ -1501,7 +1667,7 @@ let print (program : L.program) : string =
   let extern_types : bool =
     List.exists (function L.ExternType _ -> true | _ -> false) all_declarations
   in
-  let atom_needs_extern_types : bool =
+  let extern_dependent_types =
     let dependencies =
       List.filter_map
         (function
@@ -1528,14 +1694,16 @@ let print (program : L.program) : string =
           | _ -> names)
         Order.StringSet.empty all_declarations
     in
-    let dependent = close roots in
+    close roots
+  in
+  let atom_needs_extern_types : bool =
     List.exists
       (function
         | L.Relation { argument_types; _ } ->
             List.exists
               (fun typ ->
                 not (Order.StringSet.is_empty
-                  (Order.StringSet.inter dependent (Order.type_references typ))))
+                  (Order.StringSet.inter extern_dependent_types (Order.type_references typ))))
               argument_types
         | _ -> false)
       relations
@@ -1551,6 +1719,21 @@ let print (program : L.program) : string =
   in
   extern_types_active := extern_types;
   atom_has_extern_types := atom_needs_extern_types;
+  let rec uses_p4_model (term : L.term) =
+    match term with
+    | L.Native (("SpecTec.externStaticAllowed" | "SpecTec.externFunctionAllowed"
+                 | "SpecTec.externMethodAllowed"), _) -> true
+    | _ -> List.exists uses_p4_model (Traversal.term_children term)
+  in
+  program_has_p4_extern_model := List.exists (function
+    | L.Relation { rules; _ } -> List.exists (fun (rule : L.rule) ->
+        List.exists uses_p4_model
+          (List.concat_map Traversal.premise_terms rule.premises)) rules
+    | _ -> false) relations;
+  program_has_extern_types := atom_needs_extern_types
+    || (!program_has_p4_extern_model
+        && List.exists (fun name -> Order.StringSet.mem name extern_dependent_types)
+          Extern_model.p4_model_type_names);
   model_relation_names := List.map relation_name relations;
   let other_groups : L.declaration_group list =
     List.filter (fun group -> relations_in_group group = []) program

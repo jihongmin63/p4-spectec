@@ -1453,7 +1453,8 @@ let rec translate_premise (env : env) (type_parameters : string list)
       { terms = []; premises = []; binders = []; next; helpers = [] }
 
 let translate_branch (env : env) (type_parameters : string list)
-    (relation_name : string) (arity : int) (branch : branch) : L.rule * L.declaration list =
+    (relation_name : string) (arity : int) (input_positions : int list)
+    (branch : branch) : L.rule * L.declaration list =
   if List.length branch.arguments <> arity then
     unsupported branch.at ("arity mismatch in rule " ^ branch.name ^ " of " ^ relation_name);
   let env : env = { env with iteration_prefix = relation_name ^ ":" ^ branch.name } in
@@ -1465,16 +1466,9 @@ let translate_branch (env : env) (type_parameters : string list)
     | Expression exp -> translate_term env type_parameters functions next exp
     | Function (id, typ) -> pure_term next (L.Variable ("$" ^ id.it, typ))
   in
-  (* A function's result instruction runs after its guards. In particular a
-     fresh call in a failed guard must precede the next clause, while a fresh
-     call in the unvisited result must not run. *)
-  let inputs, output =
-    if String.starts_with ~prefix:"$" relation_name then
-      match List.rev branch.arguments with
-      | output :: inputs -> List.rev inputs, Some output
-      | [] -> [], None
-    else branch.arguments, None
-  in
+  (* Outputs are evaluated only after the premises succeed. Use the source
+     input hint for relations too, including interleaved/multiple outputs. *)
+  let inputs, outputs = Lang.Hints.Input.split input_positions branch.arguments in
   let result : terms_result = collect_terms translate_argument 0 inputs in
   let (result, catchable) : terms_result * int list = List.fold_left
     (fun ((result, catchable) : terms_result * int list) (premise : S.prem) ->
@@ -1499,14 +1493,14 @@ let translate_branch (env : env) (type_parameters : string list)
        catchable @ new_catchable))
     (result, []) branch.premises
   in
-  let result : terms_result = match output with
-    | None -> result
-    | Some output ->
-        let translated = translate_argument result.next output in
-        { terms = result.terms @ [ translated.term ];
-          premises = result.premises @ translated.premises;
-          binders = result.binders @ translated.binders;
-          next = translated.next; helpers = result.helpers @ translated.helpers }
+  let outputs : terms_result =
+    collect_terms translate_argument result.next outputs
+  in
+  let result : terms_result =
+    { terms = Lang.Hints.Input.combine input_positions result.terms outputs.terms;
+      premises = result.premises @ outputs.premises;
+      binders = result.binders @ outputs.binders;
+      next = outputs.next; helpers = result.helpers @ outputs.helpers }
   in
   let conclusion : L.application =
     { target = L.Global relation_name;
@@ -1629,6 +1623,8 @@ let translate_relation_unrenamed ?input_positions (env : env) (name : string) (t
     (argument_types : L.type_ref list) (branches : branch list)
     (notation : L.notation_part list option) : L.declaration list =
   let arity : int = List.length argument_types in
+  let input_positions = Option.value input_positions
+    ~default:(List.init (max 0 (arity - 1)) Fun.id) in
   let (_, rules, helpers) : string list * L.rule list * L.declaration list =
     List.fold_left
       (fun (used, rules, helpers) (branch : branch) ->
@@ -1641,20 +1637,16 @@ let translate_relation_unrenamed ?input_positions (env : env) (name : string) (t
         in
         let name_rule : string = unique_name 1 in
         let (rule, emitted) : L.rule * L.declaration list =
-          translate_branch env type_parameters name arity
+          translate_branch env type_parameters name arity input_positions
             { branch with name = name_rule }
         in
         (name_rule :: used, rule :: rules, helpers @ emitted))
       ([], [], []) branches
   in
   let rules : L.rule list = List.rev rules in
-  let input_positions = match input_positions with
-    | Some positions -> Some positions
-    | None -> Some (List.init (max 0 (List.length argument_types - 1)) Fun.id)
-  in
   L.Relation
     { name; type_parameters; equality_parameters = []; print_parameters = [];
-      argument_types; input_positions; rules; notation }
+      argument_types; input_positions = Some input_positions; rules; notation }
   :: helpers
 
 let rename_relation_declarations (env : env) (type_parameters : string list)
@@ -2302,6 +2294,7 @@ module Fresh_state = struct
   let nat = L.BuiltinType ("Nat", [])
   let zero = L.Number ("0", nat)
   let state_name name = name ^ ":state"
+  (* fail:i summarizes failure of clauses 0 through i, including their effects. *)
   let fail_name name index = name ^ ":fail:" ^ string_of_int index
   let all_fail_name name = name ^ ":fail"
   let match_name name index = name ^ ":match:" ^ string_of_int index
@@ -2329,6 +2322,46 @@ module Fresh_state = struct
       if StringSet.equal names next then names else close next
     in
     close (StringSet.singleton "$fresh_typeId")
+
+  (* The pure WFS encoding implements otherwise with regular/enabled wrappers.
+     Stateful evaluation must try the source clauses once, in order, carrying
+     the failed guards' final counter into the fallback. Flatten those wrappers
+     before lowering so the ordinary failure chain does exactly that. *)
+  let inline_otherwise names declarations =
+    let relations = List.fold_left (fun map located ->
+      match located.L.declaration with
+      | L.Relation { name; rules; _ } -> StringMap.add name rules map
+      | _ -> map) StringMap.empty declarations in
+    let replacements, removed = List.fold_left (fun (replacements, removed) located ->
+      match located.L.declaration with
+      | L.Relation ({ name; rules = [ wrapper; fallback ]; _ } as relation)
+        when StringSet.mem name names ->
+          let regular = name ^ ":regular" and enabled = name ^ ":enabled" in
+          (match StringMap.find_opt regular relations, wrapper.premises, fallback.premises with
+          | Some rules, [ L.Holds call ], L.NotHolds (guard, _) :: premises
+            when call.target = L.Global regular && guard.target = L.Global enabled ->
+              let rules = List.map (fun (rule : L.rule) ->
+                { rule with conclusion = { rule.conclusion with target = L.Global name } }) rules in
+              let rec fallback_name index =
+                let candidate = if index = 1 then fallback.name
+                  else fallback.name ^ "_" ^ string_of_int index in
+                if List.exists (fun (rule : L.rule) -> rule.name = candidate) rules
+                then fallback_name (index + 1) else candidate in
+              let fallback = { fallback with name = fallback_name 1; premises;
+                catchable = List.map (fun position -> position - 1) fallback.catchable } in
+              let replacement = L.Relation { relation with rules = rules @ [ fallback ] } in
+              StringMap.add name replacement replacements,
+              StringSet.add regular (StringSet.add enabled removed)
+          | _ -> replacements, removed)
+      | _ -> replacements, removed)
+      (StringMap.empty, StringSet.empty) declarations in
+    List.filter_map (fun located ->
+      match located.L.declaration with
+      | L.Relation { name; _ } when StringSet.mem name removed -> None
+      | L.Relation { name; _ } ->
+          Some { located with declaration =
+            Option.value (StringMap.find_opt name replacements) ~default:located.declaration }
+      | _ -> Some located) declarations
 
   let state_call name before args after (application : L.application) =
     { application with target = L.Global (state_name name);
@@ -2388,6 +2421,20 @@ module Fresh_state = struct
         print_instance_arguments = [];
         arguments = [ before; fresh; after ] } }
 
+  (* Distinct variables (possibly in tuples) match every value of the input
+     type. Repeated variables, constants and variant/list patterns can fail. *)
+  let irrefutable_inputs terms =
+    let rec pattern seen = function
+      | L.Variable (name, _) when not (StringSet.mem name seen) ->
+          Some (StringSet.add name seen)
+      | L.Typed (term, _) -> pattern seen term
+      | L.Tuple (left, right) ->
+          Option.bind (pattern seen left) (fun seen -> pattern seen right)
+      | _ -> None in
+    List.fold_left (fun seen term -> Option.bind seen (fun seen -> pattern seen term))
+      (Some StringSet.empty) terms
+    |> Option.is_some
+
   let lower_relation (names : StringSet.t) (positions : int list StringMap.t)
       (located : L.located_declaration) :
       L.located_declaration list =
@@ -2407,16 +2454,14 @@ module Fresh_state = struct
           else
             List.mapi (fun index rule ->
               let previous, previous_binders, current =
-                List.fold_left (fun (premises, binders, number) previous ->
-                  let next = number + 1 in
+                if index = 0 then [], [], 0 else
                   let call = { rule.L.conclusion with
-                    target = L.Global (fail_name name previous);
-                    arguments = variable (counter number)
+                    target = L.Global (fail_name name (index - 1));
+                    arguments = initial
                       :: inputs_for positions name rule.conclusion.arguments
-                      @ [ variable (counter next) ] } in
-                  (premises @ [ L.Holds call ],
-                   binders @ [ counter next, nat ], next))
-                  ([], [], 0) (List.init index Fun.id) in
+                      @ [ variable (counter 1) ] } in
+                  [ L.Holds call ], [ counter 1, nat ], 1
+              in
               let premises, binders, finish = sequence names positions rule.premises current in
               let success = { rule with
                 binders = (counter 0, nat) :: rule.binders
@@ -2425,9 +2470,12 @@ module Fresh_state = struct
                 conclusion = state_call name initial rule.conclusion.arguments
                   (variable (counter finish)) rule.conclusion } in
               let input_terms = inputs_for positions name rule.conclusion.arguments in
+              let needs_match = not (irrefutable_inputs input_terms) in
+              let input_names = List.concat_map variables_in_term input_terms |> List.map fst in
               let matcher = make_relation original (match_name name index)
                 input_types
                 [ { rule with name = "recognize"; premises = [];
+                    binders = List.filter (fun (name, _) -> List.mem name input_names) rule.binders;
                     conclusion = { rule.conclusion with
                       target = L.Global (match_name name index);
                       arguments = input_terms } } ] in
@@ -2468,14 +2516,36 @@ module Fresh_state = struct
                       target = L.Global helper_name; arguments } in
                     let helper_rule = { rule with
                       name = "has_match"; premises = [ L.Holds application ];
-                      catchable = []; conclusion = call } in
+                      catchable = []; conclusion = call }
+                      |> Relation_optimizer.trim_failure_binders in
                     let helper = make_relation original helper_name
                       (List.map snd fixed) [ helper_rule ] in
                     L.NotHolds (call, located.at), helper
                   in
                   let failure = match premise with
-                    | L.Prop proposition when fully_bound ->
-                        Some (L.Prop (L.Not proposition), before, [], [])
+                    | L.Prop proposition ->
+                        (* A binding pattern fails only when no assignment to
+                           its newly introduced variables can satisfy it. *)
+                        let mentioned = List.concat_map variables_in_term
+                          (Traversal.prop_terms proposition) |> List.map fst in
+                        let unbound = List.filter (fun (name, _) ->
+                          List.mem name mentioned && not (List.mem name bound_names))
+                          rule.binders in
+                        let binds_value pattern value = match pattern with
+                          | L.Variable (name, _) when not (List.mem name bound_names) ->
+                              List.for_all (fun (name, _) -> List.mem name bound_names)
+                                (variables_in_term value)
+                          | _ -> false in
+                        let irrefutable = match proposition with
+                          | L.Comparison (L.Eq, left, right) ->
+                              binds_value left right || binds_value right left
+                          | _ -> false in
+                        (* A fresh variable can always bind an evaluated value;
+                           its universally negated equality is unsatisfiable. *)
+                        if irrefutable then None else
+                        let failure = List.fold_right (fun (name, typ) body ->
+                          L.Forall (name, typ, body)) unbound (L.Not proposition) in
+                        Some (L.Prop failure, before, [], [])
                     | L.Holds application
                       when List.mem position rule.catchable
                            && active names application ->
@@ -2503,11 +2573,21 @@ module Fresh_state = struct
                           variable (counter next), [ counter next, nat ], [])
                     | L.NotHolds (application, _) when fully_bound ->
                         Some (L.Holds application, before, [], [])
-                    | L.Holds _ | L.NotExists _ | L.Prop _ | L.NotHolds _ -> None
+                    | L.Holds _ | L.NotExists _ | L.NotHolds _ -> None
                   in
                   Option.map (fun (negative, after, extra, generated) ->
+                    let rec quantified = function
+                      | L.Forall (name, _, body) -> name :: quantified body
+                      | _ -> [] in
+                    let bound = match negative with
+                      | L.Prop proposition -> quantified proposition
+                      | _ -> [] in
+                    (* Newly quantified variables occur in neither the input
+                       nor the prefix. Do not demand outer witnesses for them. *)
+                    let binders = List.filter (fun (name, _) -> not (List.mem name bound))
+                      rule.binders in
                     { L.name = "guard_" ^ string_of_int position;
-                      binders = (counter 0, nat) :: rule.binders
+                      binders = (counter 0, nat) :: binders
                         @ prefix_binders @ extra;
                       premises = prefix @ [ negative ]; catchable = [];
                       conclusion = { rule.conclusion with
@@ -2517,25 +2597,36 @@ module Fresh_state = struct
                   (List.mapi (fun i premise -> i, premise) rule.premises) in
               let call_helpers = List.concat_map snd failed_guards in
               let failed_guards = List.map fst failed_guards in
-              let failure = make_relation original (fail_name name index)
-                fail_type (failed_guards @ (if input_types = [] then [] else [ mismatch ])) in
-              success, matcher :: call_helpers @ [ failure ]) rules
+              let failures = failed_guards @ (if needs_match then [ mismatch ] else []) in
+              let failures = if index = 0 then failures else
+                List.map (fun (failure : L.rule) ->
+                  let entry = variable "fresh:entry" in
+                  let inputs = List.tl (split_result failure.conclusion.arguments) in
+                  let previous = { failure.conclusion with
+                    target = L.Global (fail_name name (index - 1));
+                    arguments = entry :: inputs @ [ initial ] } in
+                  { failure with
+                    binders = ("fresh:entry", nat) :: failure.binders;
+                    premises = L.Holds previous :: failure.premises;
+                    conclusion = { failure.conclusion with
+                      arguments = entry :: List.tl failure.conclusion.arguments } }) failures in
+              let failures = List.map Relation_optimizer.trim_failure_binders failures in
+              let failure = make_relation original (fail_name name index) fail_type failures in
+              success, (if needs_match then [ matcher ] else []) @ call_helpers @ Relation_optimizer.share failure) rules
             |> fun lowered ->
                List.map fst lowered, List.concat_map snd lowered
         in
         let all_fail =
           let inputs = List.mapi (fun i typ ->
             L.Variable ("fresh:input:" ^ string_of_int i, typ)) input_types in
-          let premises = List.mapi (fun index _ ->
-            L.Holds { target = L.Global (fail_name name index);
+          let premises = [ L.Holds {
+              target = L.Global (fail_name name (List.length rules - 1));
               type_arguments = List.map (fun n -> L.TypeParameter n)
                 relation.type_parameters;
               instance_arguments = []; print_instance_arguments = [];
-              arguments = variable (counter index) :: inputs
-                @ [ variable (counter (index + 1)) ] }) rules in
+              arguments = initial :: inputs @ [ variable (counter 1) ] } ] in
           let rule = { L.name = "all_failed";
-            binders = List.init (List.length rules + 1)
-              (fun i -> counter i, nat)
+            binders = [ counter 0, nat; counter 1, nat ]
               @ List.mapi (fun i typ -> "fresh:input:" ^ string_of_int i, typ)
                   input_types;
             premises; catchable = [];
@@ -2543,7 +2634,7 @@ module Fresh_state = struct
               type_arguments = List.map (fun n -> L.TypeParameter n)
                 relation.type_parameters;
               instance_arguments = []; print_instance_arguments = [];
-              arguments = initial :: inputs @ [ variable (counter (List.length rules)) ] } } in
+              arguments = initial :: inputs @ [ variable (counter 1) ] } } in
           make_relation original (all_fail_name name) fail_type
             (if rules = [] then [] else [ rule ])
         in
@@ -2573,6 +2664,7 @@ module Fresh_state = struct
       | _ -> false) declarations)
     then declarations
     else
+      let declarations = inline_otherwise (effectful declarations) declarations in
       let names = effectful declarations in
       let rec stateful_reference term =
         match term with
@@ -2873,6 +2965,7 @@ let translate (program : S.spec) : (L.located_declaration list, Diagnostic.t) re
     let declarations : L.located_declaration list =
       declarations @ generated_declarations env program declarations
       |> Fresh_state.lower
+      |> Relation_optimizer.prune_helpers
     in
     Ok (equality_parameters declarations)
   with Unsupported_il diagnostic -> Error diagnostic
@@ -2898,6 +2991,7 @@ let translate_all (program : S.spec) :
   let declarations : L.located_declaration list =
     declarations @ generated_declarations env program declarations
     |> Fresh_state.lower
+    |> Relation_optimizer.prune_helpers
     |> equality_parameters
   in
   (declarations, List.rev diagnostics)

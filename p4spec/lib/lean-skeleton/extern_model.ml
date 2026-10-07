@@ -19,6 +19,11 @@ instance [SpecTecExternTypes] : DecidableEq SpecTecExternTypes.objectState :=
 
 (* This is an interface: an architecture supplies the predicates and static
    return-type environment. No result is selected by the translator. *)
+(* Types appearing in the model class fields below. Their transitive extern
+   dependencies are also parameters of InProgram, even when Atom is pure. *)
+let p4_model_type_names =
+  ["typingContext"; "evalContext"; "arch"; "objectId"; "typeIR"; "value"; "nameIR"]
+
 let p4_source = {lean|-- The return-type relations are supplied by the static P4 typing environment.
 -- The IL result datatype alone does not establish the P4 return type.
 -- validArch covers the target's architecture and stored object invariants.
