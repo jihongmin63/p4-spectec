@@ -700,3 +700,17 @@
  (alias backend-lean)
  (deps rule-shadow.lean)
  (action (run lean rule-shadow.lean)))
+
+(rule
+ (target rule-shadow-nominal.lean)
+ (deps rule-shadow.watsup rule-shadow-proof.lean)
+ (action
+  (with-stdout-to rule-shadow-nominal.lean
+   (progn
+    (run %{exe:../../lib/lean-skeleton/main.exe} %{dep:rule-shadow.watsup})
+    (cat %{dep:rule-shadow-proof.lean})))))
+
+(rule
+ (alias backend-lean)
+ (deps rule-shadow-nominal.lean)
+ (action (run lean rule-shadow-nominal.lean)))

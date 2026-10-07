@@ -153,17 +153,14 @@ let rule_dependencies (rule : L.rule) =
   Names.union calls (union_map term_dependencies
     (rule.conclusion.arguments @ List.concat_map Traversal.premise_terms rule.premises))
 
-(* ':' is reserved for generated relations. Every source relation is a root,
-   including public functions used only by a client. Keep dependencies under
-   negation and function values as well as direct positive calls. *)
-let prune_helpers (declarations : L.located_declaration list) =
+let prune_from_roots (roots : string list)
+    (declarations : L.located_declaration list) =
   let relations = Hashtbl.create (List.length declarations) in
-  let roots = List.filter_map (fun located ->
+  List.iter (fun located ->
     match located.L.declaration with
     | L.Relation { name; rules; _ } ->
-        Hashtbl.add relations name rules;
-        if String.contains name ':' then None else Some name
-    | _ -> None) declarations in
+        Hashtbl.add relations name rules
+    | _ -> ()) declarations;
   let rec visit reachable = function
     | [] -> reachable
     | name :: pending when Names.mem name reachable -> visit reachable pending
@@ -176,3 +173,23 @@ let prune_helpers (declarations : L.located_declaration list) =
   List.filter (fun located -> match located.L.declaration with
     | L.Relation { name; _ } -> Names.mem name reachable
     | _ -> true) declarations
+
+(* ':' is reserved for generated relations. Every source relation is a root,
+   including public functions used only by a client. Keep dependencies under
+   negation and function values as well as direct positive calls. *)
+let prune_helpers (declarations : L.located_declaration list) =
+  let roots = List.filter_map (fun located ->
+    match located.L.declaration with
+    | L.Relation { name; _ } when not (String.contains name ':') -> Some name
+    | _ -> None) declarations in
+  prune_from_roots roots declarations
+
+let prune_to_roots (roots : string list)
+    (declarations : L.located_declaration list) =
+  let available = List.fold_left (fun names located ->
+    match located.L.declaration with
+    | L.Relation { name; _ } -> Names.add name names
+    | _ -> names) Names.empty declarations in
+  match List.find_opt (fun name -> not (Names.mem name available)) roots with
+  | Some name -> Error ("unknown relation root: " ^ name)
+  | None -> Ok (prune_from_roots roots declarations)

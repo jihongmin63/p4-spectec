@@ -47,10 +47,19 @@ def main() -> None:
         assert "OrderedFailures" not in generated
     assert "abbrev «$ordered».eval" in ordered
     assert "theorem «$ordered».success_sound" in ordered
-    assert "«$ordered:regular:eval:rule:1:prefix:1»" in ordered
+    assert "theorem «$ordered».abort_sound" not in ordered
+    assert "theorem «$ordered».unsupported_sound" not in ordered
+    assert "theorem «$ordered».timeout_sound" not in ordered
+    assert "theorem «$ordered».undetermined_sound" not in ordered
+    assert ":eval:rule:0:prefix:" not in ordered
+    assert ":eval:rule:1:prefix:" not in ordered
+    assert ":eval:rule:2:prefix:" not in ordered
     assert "def «$ordered:regular».evalSelected" in ordered
+    assert "def «$ordered:enabled».evalSelected" not in ordered
     assert "SpecTecEval.Prefix ([«$ordered:regular:eval:rule:0:failed» input]" in ordered
     assert "«$ordered:regular».evalSelected «arg:0» «arg:1»" in ordered
+    assert "«$generic_option:eval:rule:0:premises» (X_T := X_T)" in ordered
+    assert "(shadow : SpecTec.shadow) («eval:0» : (_root_.List SpecTec.shadow))" in ordered
     assert "abbrev Search.eval" in search
     assert "theorem Search.ruleFailure_sound" in search
     assert "Candidate.evalSelected n candidate" in search

@@ -13,6 +13,7 @@ type options = {
   batch_cases : string option;
   case_range : (int * int) option;
   dump_relation_graph : bool;
+  relation_roots : string list;
 }
 
 let usage =
@@ -20,7 +21,7 @@ let usage =
    [--case P4 EXPECTED | --reject-case P4 | --manifest TSV]... \
    [--case-range START COUNT] \
    [--dump-output P4 | --check-rejection P4 | --batch-cases PATHS | \
-    --dump-relation-graph] \
+    --dump-relation-graph] [--relation-root NAME]... \
    [-I DIR]... <spec-path>..."
 
 let read_manifest path =
@@ -71,6 +72,8 @@ let parse_options arguments =
     | "--fresh-rollback" :: rest -> loop { options with fresh_rollback = true } rest
     | "--dump-relation-graph" :: rest ->
         loop { options with dump_relation_graph = true } rest
+    | "--relation-root" :: name :: rest when name <> "" ->
+        loop { options with relation_roots = name :: options.relation_roots } rest
     | "--obligations-only" :: rest ->
         loop { options with obligations_only = true } rest
     | "--case" :: path :: expected :: rest ->
@@ -96,7 +99,8 @@ let parse_options arguments =
     | "-I" :: path :: rest ->
         loop { options with includes_p4 = path :: options.includes_p4 } rest
     | ("--case" | "--reject-case" | "--manifest" | "--dump-output" |
-       "--check-rejection" | "--batch-cases" | "--case-range" | "-I") :: [] -> Error usage
+       "--check-rejection" | "--batch-cases" | "--case-range" |
+       "--relation-root" | "-I") :: [] -> Error usage
     | argument :: _ when String.starts_with ~prefix:"-" argument ->
         Error ("Unknown option: " ^ argument ^ "\n" ^ usage)
     | path :: rest ->
@@ -106,7 +110,7 @@ let parse_options arguments =
          keep_going = false; fresh_exact_counter = false; fresh_rollback = false;
          obligations_only = false; dump_output = None;
          check_rejection = None; batch_cases = None; case_range = None;
-         dump_relation_graph = false } arguments
+         dump_relation_graph = false; relation_roots = [] } arguments
 
 let read_expected path =
   try
@@ -193,7 +197,7 @@ let fresh_context env evaluate (case : Case_obligation.case) =
           (Ast.Lean.Name "p4programIR") value |> Printer.print_term [] in
         if case.expected <> Some observed then
           Error (diagnostic ("expected output differs from the exact interpreter for "
-            ^ case.source ^ "; capture it with --dump-output before --fresh-rollback"))
+            ^ case.source ^ "; capture it with --dump-output before nominal case generation"))
         else
           let allocation_ids = Hashtbl.create (List.length allocated) in
           List.iter (fun (value : Runtime.Value.t) ->
@@ -324,6 +328,14 @@ let () =
   if options.fresh_exact_counter && options.fresh_rollback then (
     prerr_endline "--fresh-exact-counter and --fresh-rollback are distinct modes";
     exit 2);
+  if options.relation_roots <> []
+     && (options.fresh_exact_counter || options.fresh_rollback) then (
+    prerr_endline
+      "--relation-root is available only in the default relation-local mode";
+    exit 2);
+  if options.relation_roots <> [] && options.keep_going then (
+    prerr_endline "--relation-root cannot be combined with --keep-going";
+    exit 2);
   if options.keep_going && options.cases <> [] && not options.obligations_only then (
     prerr_endline
       "--keep-going cannot emit case propositions; use --obligations-only";
@@ -340,7 +352,7 @@ let () =
       options.batch_cases <> None) &&
      (options.cases <> [] || options.obligations_only || options.keep_going
       || options.fresh_exact_counter || options.fresh_rollback ||
-      options.case_range <> None ||
+      options.case_range <> None || options.relation_roots <> [] ||
       List.length (List.filter Option.is_some
         [options.dump_output; options.check_rejection; options.batch_cases]) > 1) then (
     prerr_endline "oracle checks cannot be combined with cases or translation options";
@@ -348,6 +360,7 @@ let () =
   if options.dump_relation_graph &&
      (options.cases <> [] || options.obligations_only || options.keep_going
       || options.fresh_exact_counter || options.fresh_rollback || options.case_range <> None
+      || options.relation_roots <> []
       || options.dump_output <> None || options.check_rejection <> None
       || options.batch_cases <> None) then (
     prerr_endline
@@ -381,7 +394,9 @@ let () =
               start
         in
         let* cases = parse_cases options.includes_p4 selected in
-        let* cases = if options.fresh_rollback then
+        (* Both nominal modes compare accepted results up to one whole-output
+           alpha renaming.  Exact-counter remains concrete by construction. *)
+        let* cases = if not options.fresh_exact_counter then
           enrich_fresh_cases options.paths_spec spec_il options.includes_p4 cases
           else Ok cases in
         let* obligations =
@@ -399,7 +414,8 @@ let () =
           Ok ((if obligations = "" then lean_code else lean_code ^ "\n\n" ^ obligations),
               diagnostics)
         else
-          let* lean_code = Pipeline.transpile ~mode spec_il in
+          let* lean_code = Pipeline.transpile ~mode
+            ~relation_roots:(List.rev options.relation_roots) spec_il in
           Ok ((if obligations = "" then lean_code else lean_code ^ "\n\n" ^ obligations),
               [])
         | _ -> assert false)

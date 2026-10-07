@@ -438,7 +438,8 @@ theorem FreshNominalAlphaIR.refl
 |lean}
 
 let render ?(nominal = false) (program : L.program) : string =
-  let types = program |> List.concat_map declarations |> List.filter_map (fun declaration ->
+  let all_declarations = List.concat_map declarations program in
+  let types = all_declarations |> List.filter_map (fun declaration ->
     Option.map (fun name -> name, declaration) (data_name declaration))
     |> List.to_seq |> StringMap.of_seq in
   let normalize = normalize types in
@@ -450,61 +451,67 @@ let render ?(nominal = false) (program : L.program) : string =
   if root = None && protected_roots = [] then "" else
   let protected_types = protected_roots
     |> List.concat_map (fun protected -> List.map snd protected.inputs) in
-  let shapes = (match root with None -> [] | Some typ -> collect types normalize typ)
+  let alpha_shapes =
+    match root with None -> [] | Some typ -> collect types normalize typ in
+  let protect_shapes = alpha_shapes
     @ (match source_root with None -> [] | Some source -> collect types normalize source)
     @ List.concat_map (collect types normalize) protected_types
     |> List.sort_uniq (fun left right -> compare left.typ right.typ) in
-  (* Extern dependencies inside fixed relation references still require the type
-     family instance to state the generated function's signature. *)
-  let seen_extern_dependencies = ref [] in
-  let rec has_extern typ =
-    let typ = normalize typ in
-    if List.mem typ !seen_extern_dependencies then false else (
-      seen_extern_dependencies := typ :: !seen_extern_dependencies;
-      match typ with
-      | L.Name name | L.Applied (name, _) -> (
-          match StringMap.find_opt name types with
-          | Some (L.ExternType _) -> true
-          | Some (L.Datatype datatype) ->
-              let bindings = instantiate name datatype.type_parameters typ in
-              List.exists has_extern
-                (List.concat_map (fun (c : L.constructor) -> List.map (substitute bindings) c.arguments) datatype.constructors)
-          | Some (L.Structure { fields; _ }) -> List.exists (fun (_, field) -> has_extern field) fields
-          | _ -> false)
-      | L.BuiltinType (_, args) | L.TupleType args -> List.exists has_extern args
-      | L.RelationType (args, result) -> List.exists has_extern (result :: args)
-      | L.TypeParameter _ -> false) in
-  let functions identity = if root = None || shapes = [] then "" else
-    "mutual\n\n" ^ String.concat "\n\n" (List.map (fun shape -> render_shape shapes shape ~identity) shapes) ^ "\n\nend\n\n" in
-  let protect_functions = if shapes = [] then "" else
+  (* Compute the named-type closure once.  A shared traversal visited set made
+     disconnected roots order-dependent, while a fresh traversal per shape is
+     quadratic on the full specification. *)
+  let extern_dependent_types = Order.extern_dependent_types all_declarations in
+  let has_extern typ =
+    not
+      (Order.StringSet.is_empty
+         (Order.StringSet.inter extern_dependent_types
+            (Order.type_references (normalize typ)))) in
+  let functions identity = if alpha_shapes = [] then "" else
     "mutual\n\n" ^ String.concat "\n\n"
-      (List.map (render_protect_shape shapes) shapes) ^ "\n\nend\n\n" in
-  let protected_relations = protected_roots
-    |> List.map (render_protected_root shapes) |> String.concat "\n\n" in
-  let protected_relations = if protected_relations = "" then "" else
-    protected_relations ^ "\n\n" in
+      (List.map (fun shape -> render_shape alpha_shapes shape ~identity)
+         alpha_shapes)
+    ^ "\n\nend\n\n" in
+  let protect_functions selected = if selected = [] then "" else
+    "mutual\n\n" ^ String.concat "\n\n"
+      (List.map (render_protect_shape protect_shapes) selected)
+    ^ "\n\nend\n\n" in
+  let plain_shapes, extern_shapes =
+    List.partition (fun shape -> not (has_extern shape.typ)) protect_shapes in
+  let protected_relations roots = roots
+    |> List.map (render_protected_root protect_shapes) |> String.concat "\n\n" in
+  let plain_protected_roots, extern_protected_roots =
+    List.partition (fun protected ->
+      not (List.exists (fun (_, typ) -> has_extern typ) protected.inputs))
+      protected_roots in
   let root_wrapper = match root with
     | None -> ""
-    | Some root -> (match find_shape shapes root with
+    | Some root -> (match find_shape alpha_shapes root with
       | Some shape when shape.name = "FreshRename_p4programIR" -> ""
       | _ ->
         "def FreshRename_p4programIR (ρ : _root_.String → _root_.String) (value : p4programIR) : p4programIR :=\n  "
-        ^ rename shapes root "value" ^ "\n\n"
+        ^ rename alpha_shapes root "value" ^ "\n\n"
         ^ "theorem FreshRename_p4programIR_id (value : p4programIR) : FreshRename_p4programIR _root_.id value = value :=\n  "
-        ^ identity_proof shapes "FreshRename_p4programIR" [root, "value"] ^ "\n\n") in
+        ^ identity_proof alpha_shapes "FreshRename_p4programIR"
+            [root, "value"]
+        ^ "\n\n") in
   let source_protection = match source_root with
     | None -> ""
     | Some source ->
-        let body = protect shapes source "value" in
+        let body = protect protect_shapes source "value" in
         "def FreshProtected_p4program (value : p4program) : List String :=\n  "
         ^ body ^ "\n\n" in
-  let roots = Option.to_list root @ protected_types @ Option.to_list source_root in
   let alpha = match root with
     | None -> ""
     | Some _ -> name_helpers ^ "\n\n" ^ functions false ^ functions true
       ^ root_wrapper ^ alpha_interface
       ^ (if nominal then "\n\n" ^ nominal_alpha_interface else "") in
-  "section\n\n" ^ (if List.exists has_extern roots
-    then "variable [SpecTecExternTypes]\n\n" else "")
-  ^ protect_functions ^ protected_relations ^ source_protection ^ alpha
-  ^ "\n\nend\n"
+  let section needs_extern body = if body = "" then "" else
+    "section\n\n" ^ (if needs_extern
+      then "variable [SpecTecExternTypes]\n\n" else "")
+    ^ body ^ "\n\nend\n\n" in
+  section false (protect_functions plain_shapes)
+  ^ section true (protect_functions extern_shapes)
+  ^ section false (protected_relations plain_protected_roots)
+  ^ section true (protected_relations extern_protected_roots)
+  ^ section (Option.fold ~none:false ~some:has_extern source_root) source_protection
+  ^ section (Option.fold ~none:false ~some:has_extern root) alpha

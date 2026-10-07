@@ -25,7 +25,7 @@ def main():
     assert "SpecTecFresh.Allocates" in generated
     assert "SpecTecFresh.Derives" in generated
     assert "Program_ok:supply" in generated
-    for relation in ("Program_ok", "Context_ok"):
+    for relation in ("Program_ok", "Context_ok", "ExternalContext_ok"):
         collector = "FreshProtectedRelation_" + hashlib.md5(
             relation.encode()
         ).hexdigest()

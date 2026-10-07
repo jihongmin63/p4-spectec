@@ -1,7 +1,9 @@
 syntax typeId = text
 syntax p4program = INPUT typeId
+extern syntax json
 syntax p4programIR = OUTPUT typeId typeId typeId
 syntax context = CONTEXT typeId
+syntax externalContext = EXTERNAL json
 
 builtin dec $fresh_typeId() : typeId
 
@@ -16,6 +18,7 @@ var ordinary : typeId
 var first : typeId
 var second : typeId
 var composite : typeId
+var payload : json
 
 relation Program_ok:
   p4program |- p4programIR
@@ -33,4 +36,12 @@ relation Context_ok:
 
 rule Context_ok/fresh:
   CONTEXT ordinary |- first
+  -- if first = $fresh_typeId()
+
+relation ExternalContext_ok:
+  externalContext |- typeId
+  hint(input %0)
+
+rule ExternalContext_ok/fresh:
+  EXTERNAL payload |- first
   -- if first = $fresh_typeId()

@@ -72,18 +72,16 @@ private theorem siteB_text :
     Allocates siteB pairAfterA "nominal-B" pairAfterB := by
   exact Allocates.record (by decide) (by decide)
 
-private theorem pair_supply_selected :
-    «$nominal_pair:supply».evalSelected pairRoot
-      (("nominal-A", "nominal-B"), pairAfterB) := by
-  constructor
-  · trivial
-  · exact ⟨pairRoot, "nominal-A", "nominal-B", pairAfterA, pairAfterB,
-      rfl, rfl, siteA_text, siteB_text, trivial⟩
+private theorem pair_supply :
+    «$nominal_pair:supply» pairRoot
+      ("nominal-A", "nominal-B") pairAfterB := by
+  exact «$nominal_pair:supply».case_1 pairRoot "nominal-A" "nominal-B"
+    pairAfterA pairAfterB siteA_text siteB_text
 
 example : «$nominal_pair».evalSelected () ("nominal-A", "nominal-B") := by
   constructor
   · trivial
   · exact ⟨pairAfterB, ("nominal-A", "nominal-B"), rfl, rfl,
-      pair_supply_selected, trivial⟩
+      pair_supply, trivial⟩
 
 end SpecTec

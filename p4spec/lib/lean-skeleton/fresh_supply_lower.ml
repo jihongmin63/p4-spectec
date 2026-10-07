@@ -1,6 +1,7 @@
 module L = Ast.Lean
 module StringMap = Map.Make (String)
 module StringSet = Set.Make (String)
+module IntSet = Set.Make (Int)
 
 let supply_type = L.Name "FreshSupply"
 let string_type = L.BuiltinType ("String", [])
@@ -106,6 +107,16 @@ let rename_premise = function
   | L.Prop proposition -> L.Prop (rename_prop proposition)
 
 let variable_name = function L.Variable (name, _) -> Some name | _ -> None
+
+let state_argument_positions (rules : L.rule list) =
+  List.fold_left (fun positions (rule : L.rule) ->
+    List.fold_left (fun positions (index, argument) ->
+      match variable_name argument with
+      | Some name when state_variable name -> IntSet.add index positions
+      | _ -> positions)
+      positions (List.mapi (fun index argument -> index, argument)
+        rule.conclusion.arguments))
+    IntSet.empty rules
 
 let resolve substitutions = function
   | L.Variable (name, typ) ->
@@ -334,26 +345,28 @@ let transform_relation positions stateful located =
         { located with declaration = transform_fresh_state located.declaration }
       else
         let is_state = ends_with ":state" name in
-        let is_failure = String.contains name ':' &&
-          (ends_with ":fail" name ||
-           let marker = ":fail:" in
-           let rec contains index =
-             index + String.length marker <= String.length name
-             && (String.sub name index (String.length marker) = marker
-                 || contains (index + 1)) in
-           contains 0) in
+        let is_failure =
+          (match argument_types with typ :: _ -> typ = nat_type | [] -> false)
+          && String.contains name ':'
+          && (ends_with ":fail" name ||
+              let marker = ":fail:" in
+              let rec contains index =
+                index + String.length marker <= String.length name
+                && (String.sub name index (String.length marker) = marker
+                    || contains (index + 1)) in
+              contains 0) in
         let base = if is_state then drop_suffix ":state" name else name in
-        let argument_types =
+        let state_positions = state_argument_positions rules in
+        let state_positions =
           if is_state then
-            (match argument_types with
-            | _ :: middle ->
-                (match List.rev middle with
-                | _ :: rest -> supply_type :: List.rev rest @ [ supply_type ]
-                | [] -> argument_types)
-            | [] -> argument_types)
-          else if is_failure then
-            (match argument_types with _ :: rest -> supply_type :: rest | [] -> [])
-          else argument_types in
+            let positions = IntSet.add 0 state_positions in
+            if argument_types = [] then positions
+            else IntSet.add (List.length argument_types - 1) positions
+          else if is_failure then IntSet.add 0 state_positions
+          else state_positions in
+        let argument_types = List.mapi (fun index typ ->
+          if IntSet.mem index state_positions then supply_type else typ)
+          argument_types in
         let input_positions =
           if is_state then Some (0 :: List.map (( + ) 1)
             (Option.value (StringMap.find_opt base positions) ~default:[]))

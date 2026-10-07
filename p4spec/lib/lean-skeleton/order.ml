@@ -99,6 +99,34 @@ let references (declaration : L.declaration) : StringSet.t =
       StringSet.union (type_references source) (type_references target)
   | Membership { source; _ } -> type_references source
 
+let extern_dependent_types (declarations : L.declaration list) : StringSet.t =
+  let dependencies : (string * StringSet.t) list =
+    List.filter_map
+      (function
+        | L.Datatype _ | L.TypeAlias _ | L.Structure _ as declaration ->
+            Some (defined_name declaration, references declaration)
+        | _ -> None)
+      declarations
+  in
+  let rec close (names : StringSet.t) : StringSet.t =
+    let expanded : StringSet.t =
+      List.fold_left
+        (fun names (name, referenced) ->
+          if StringSet.is_empty (StringSet.inter names referenced) then names
+          else StringSet.add name names)
+        names dependencies
+    in
+    if StringSet.equal expanded names then names else close expanded
+  in
+  let roots : StringSet.t =
+    List.fold_left
+      (fun names -> function
+        | L.ExternType name -> StringSet.add name names
+        | _ -> names)
+      StringSet.empty declarations
+  in
+  close roots
+
 type node = {
   source : L.located_declaration;
   dependencies : StringSet.t;

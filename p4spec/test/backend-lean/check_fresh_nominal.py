@@ -32,6 +32,7 @@ def main() -> None:
     assert "def «$nominal_pair».freshSites" in generated
     assert "SpecTecFresh.Allocates" in generated
     assert "$nominal_pair:supply" in generated
+    assert "def «$nominal_pair:supply».evalSelected" not in generated
     assert "fresh:counter" not in generated
     assert "$fresh_typeId:state" not in generated
     assert '"FRESH__" ++' not in generated

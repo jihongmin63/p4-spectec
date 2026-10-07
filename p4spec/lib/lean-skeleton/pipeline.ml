@@ -25,7 +25,7 @@ let print ?(mode = RelationLocal) program =
     Error (Diagnostic.error ~source:"lean" Util.Source.no_region
       ("fresh abstraction: " ^ message))
 
-let transpile ?(mode = RelationLocal) (input : S.spec) :
+let transpile ?(mode = RelationLocal) ?(relation_roots = []) (input : S.spec) :
     (string, Diagnostic.t) result =
   let fresh_counter = mode <> RelationLocal in
   let fresh_rollback = mode = FreshRollback in
@@ -33,6 +33,12 @@ let transpile ?(mode = RelationLocal) (input : S.spec) :
   let lean_ast = match mode with
     | RelationLocal -> Fresh_supply_lower.lower lean_ast
     | FreshExactCounter | FreshRollback -> lean_ast in
+  let* lean_ast = match relation_roots with
+    | [] -> Ok lean_ast
+    | roots ->
+        Relation_optimizer.prune_to_roots roots lean_ast
+        |> Result.map_error (fun message ->
+             Diagnostic.error ~source:"lean" Util.Source.no_region message) in
   let* ordered = Order.order lean_ast in
   print ~mode ordered
 

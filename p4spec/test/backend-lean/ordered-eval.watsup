@@ -32,3 +32,21 @@ relation NegativeLoop:
 rule NegativeLoop/not_self:
   |- ZERO
   -- NegativeLoop:/ |- ZERO
+
+;; A polymorphic rule without binders leaves no term from which Lean can infer
+;; the explicit type argument to its generated premise list.
+dec $generic_option<X>(X?) : bool
+def $generic_option<X>(eps) = false
+def $generic_option<X>(X) = true
+
+;; The first rule binder deliberately shadows a global type used by the second
+;; binder.  Generated evaluator certificates must qualify that type.
+syntax shadow = SHADOW
+syntax shadowList =
+  | _EMPTY
+  | shadowList shadow
+
+dec $flatten_shadowList(shadowList) : shadow*
+def $flatten_shadowList(_EMPTY) = eps
+def $flatten_shadowList(shadowList shadow)
+  = $flatten_shadowList(shadowList) ++ [ shadow ]

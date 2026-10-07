@@ -50,9 +50,10 @@ def main():
         "namespace «", 1
     )[0]
     for theorem in (
-        "abort_sound", "unsupported_sound", "timeout_sound", "undetermined_sound"
+        "Evaluation.abort_sound", "Evaluation.unsupported_sound",
+        "Evaluation.timeout_fuel", "Evaluation.undetermined_sound"
     ):
-        assert f"theorem Gate.{theorem}" in ordered
+        assert f"theorem {theorem}" in ordered
 
     certificate_proof = r'''
 namespace SpecTec
@@ -71,22 +72,22 @@ theorem gate_abort_certificate
     (proof : Gate.eval 1 .ZERO (.abort "fatal")) :
     SpecTecEval.Boundary.aborts (Input := Gate.EvalInput)
       (Error := String) (Feature := String) .ZERO "fatal" := by
-  spec_check_certificate proof using Gate.abort_sound
+  spec_check_certificate proof using SpecTecEval.Evaluation.abort_sound
 
 theorem gate_unsupported_certificate
     (proof : Gate.eval 1 .ZERO (.unsupported "missing")) :
     SpecTecEval.Boundary.unsupported (Input := Gate.EvalInput)
       (Error := String) (Feature := String) .ZERO "missing" := by
-  spec_check_certificate proof using Gate.unsupported_sound
+  spec_check_certificate proof using SpecTecEval.Evaluation.unsupported_sound
 
 theorem gate_timeout_certificate {fuel : Nat}
     (proof : Gate.eval fuel .ZERO (.timeout)) : fuel = 0 := by
-  spec_check_certificate proof using Gate.timeout_sound
+  spec_check_certificate proof using SpecTecEval.Evaluation.timeout_fuel
 
 theorem negative_undetermined_certificate {fuel : Nat}
     (proof : NegativeLoop.eval fuel .ZERO (.undetermined)) :
     NegativeLoop.evalUndetermined .ZERO := by
-  spec_check_certificate proof using NegativeLoop.undetermined_sound
+  spec_check_certificate proof using SpecTecEval.Evaluation.undetermined_sound
 
 #print axioms gate_success_certificate
 #print axioms gate_abort_certificate

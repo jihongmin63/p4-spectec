@@ -1,5 +1,15 @@
 extern syntax json
 
+syntax externalBox = EXTERNAL json
+
+var box : externalBox
+
+dec $generic_id<X>(X) : X
+def $generic_id<X>(X) = X
+
+dec $external_id(externalBox) : externalBox
+def $external_id(box) = $generic_id<externalBox>(box)
+
 syntax declaration = CONSTANTDECLARATION nat | ERRORDECLARATION nat
 syntax value = ZERO | WRAP value
 

@@ -3,8 +3,11 @@ namespace SpecTec
 -- case_0: "./case-empty.p4"
 def case_0_input : p4program := (@p4program._EMPTY)
 def case_0_expected : p4programIR := (@p4programIR.OK)
-def case_0 : Prop := Program_ok case_0_input case_0_expected ∧
-  ∀ output : p4programIR, Program_ok case_0_input output → output = case_0_expected
+def case_0_fresh_names : List String := []
+def case_0_protected_names : List String := []
+def case_0 : Prop := (∃ output : p4programIR, Program_ok case_0_input output ∧
+    FreshAlphaIR case_0_fresh_names case_0_protected_names case_0_expected output) ∧
+  ∀ output : p4programIR, Program_ok case_0_input output → FreshAlphaIR case_0_fresh_names case_0_protected_names case_0_expected output
 
 -- case_1: "./case-semicolon.p4"
 def case_1_input : p4program := (@p4program.«% ';'» (@p4program._EMPTY))

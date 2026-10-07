@@ -62,9 +62,10 @@ Lean theorems, explicitly `include` section hypotheses used only in handlers.
 The handler binder names above, plus `atom`, `proof`, `_known` and `_derivations`,
 are reserved: avoid those names for section parameters used by the command.
 
-For leaves without an explicit handler, a generated `head_property` theorem is
-reused when the invariant reduces to True on every head. Its proof is checked
-once with the semantics; the default tactic only handles the remaining leaves.
+For a leaf without an explicit handler, the command first checks its constructor
+heads locally. If the invariant reduces to `True` for all of them, it emits a
+local `cases member` proof; otherwise it runs `default`. No whole-spec closure
+or eager per-relation head theorem is generated.
 -/
 syntax (name := specInvariant)
   "spec_invariant " ident " for " ident " : " term
@@ -153,30 +154,26 @@ private def application (name : Name) (s : Settings) (member : String) : Command
     | _ => ""
   return name.toString ++ captures info.type ++ arguments s member
 
-/-- Use only definitional truth, so no rule premise or WFS obligation is dropped.
-    Older generated modules and user-defined programs can use the default tactic. -/
-private def trivialHeads (s : Settings) (group : Name) : CommandElabM (Option String) := do
-  let lemma := group ++ `head_property
-  unless (← getEnv).contains lemma do return none
-  let call := lemma.toString ++ " (" ++ s.predicate ++ ")"
-  let result ← runTermElabM fun _ => do
-    let stx ← match Parser.runParserCategory (← getEnv) `term call with
+/-- Check only the current membership leaf.  This preserves the old shortcut
+without compiling a public theorem for every relation in the specification. -/
+private def trivialHeads (s : Settings) (group : Name) : CommandElabM Bool := do
+  let predicate ← runTermElabM fun _ => do
+    let stx ← match Parser.runParserCategory (← getEnv) `term s.predicate with
       | .ok stx => pure stx
-      | .error error => throwError "invalid head property application: {error}"
+      | .error error => throwError "invalid invariant predicate: {error}"
     let value ← Term.elabTerm stx none
     Term.synthesizeSyntheticMVarsNoPostponing
-    forallTelescope (← inferType value) fun xs _ => do
-      let mut count := 0
-      for x in xs do
-        if (← x.fvarId!.getDecl).userName.getString!.startsWith "head:case:" then
-          let trivial ← forallTelescope (← inferType x) fun _ conclusion =>
-            withTransparency .default <| isDefEq conclusion (mkConst ``True)
-          unless trivial do return none
-          count := count + 1
-      return some count
-  return result.map fun count =>
-    "by\n  exact " ++ call ++
-    String.join (List.replicate count " (by intros; exact True.intro)") ++ " member"
+    instantiateMVars value
+  let info ← getConstInfoInduct group
+  info.ctors.allM fun ctor => do
+    let ctorInfo ← getConstInfoCtor ctor
+    liftTermElabM <| forallTelescope ctorInfo.type fun _ result => do
+      let arguments := result.getAppArgs
+      let some rule := arguments.back? | return false
+      let ruleName := Name.str (Name.str .anonymous "SpecTecWFS") "Rule"
+      let head := Expr.proj ruleName 0 rule
+      withTransparency .default <|
+        isDefEq (mkApp predicate head) (mkConst ``True)
 
 private partial def generate (s : Settings) (group : Name) (path : List Name) :
     StateT Generation CommandElabM Name := do
@@ -188,16 +185,15 @@ private partial def generate (s : Settings) (group : Name) (path : List Name) :
   let body ← if nodes.isEmpty then do
     let custom := s.handlers.find? fun h => h.1 == group
     if custom.isSome then modify fun state => { state with used := state.used.push group }
-    let shortcut ← if custom.isSome then pure none else trivialHeads s group
-    match shortcut with
-    | some proof => pure proof
-    | none =>
-        let proof := custom.map Prod.snd |>.getD s.fallback
-        pure <| match s.known with
-          | none => proof
-          | some known =>
-              "by\n  have _known := SpecTecWFS.All.map (fun a h => (" ++ known ++
-              ") a h) _derivations\n  clear _derivations\n  exact (" ++ proof ++ ")"
+    let trivial ← if custom.isSome then pure false else trivialHeads s group
+    let proof := if trivial then
+        "by\n  cases member <;> exact True.intro"
+      else custom.map Prod.snd |>.getD s.fallback
+    pure <| match s.known with
+      | none => proof
+      | some known =>
+          "by\n  have _known := SpecTecWFS.All.map (fun a h => (" ++ known ++
+          ") a h) _derivations\n  clear _derivations\n  exact (" ++ proof ++ ")"
   else do
     let mut branches := #[]
     for (ctor, child) in nodes do

@@ -53,6 +53,16 @@ def main() -> None:
         "an unused extern type polluted the Decl_ok component"
     assert "abbrev json" in lean, "the extern type interface disappeared"
 
+    rooted = subprocess.run(
+        [str(args.exe.resolve()), "--relation-root", "Decl_ok", str(args.source)],
+        capture_output=True,
+        text=True,
+    )
+    assert rooted.returncode == 0, rooted.stdout + rooted.stderr
+    assert "namespace «Decl_ok:Semantics»" in rooted.stdout
+    assert "namespace «CycleA:Semantics»" not in rooted.stdout
+    assert "def CycleA" not in rooted.stdout
+
     with tempfile.TemporaryDirectory(prefix="p4-relation-local-") as directory:
         directory = Path(directory)
         target = directory / "RelationLocal.lean"
@@ -61,6 +71,16 @@ def main() -> None:
             ["lean", "-j", "2", str(target)], capture_output=True, text=True
         )
         assert checked.returncode == 0, checked.stdout + checked.stderr
+
+        rooted_target = directory / "RelationRooted.lean"
+        rooted_target.write_text(rooted.stdout)
+        rooted_checked = subprocess.run(
+            ["lean", "-j", "2", str(rooted_target)],
+            capture_output=True,
+            text=True,
+        )
+        assert rooted_checked.returncode == 0, \
+            rooted_checked.stdout + rooted_checked.stderr
 
         legacy_command = [
             str(args.exe.resolve()), "--fresh-exact-counter", str(args.source)

@@ -28,15 +28,22 @@ def main():
         directory = Path(directory)
         expected = directory / "expected.lean"
         expected.write_text(oracle.stdout)
-        translated = run("--fresh-rollback", "--case", empty, expected,
-                         "--case", empty, expected, source)
-        assert translated.returncode == 0, translated.stderr
-        code = translated.stdout
-        for index in range(2):
-            assert f'def case_{index}_fresh_names : List String := ["FRESH__0", "FRESH__1"]' in code
-            assert f'def case_{index}_protected_names : List String := ["FRESH__99"]' in code
-            assert f'(∃ output : p4programIR, Program_ok case_{index}_input output ∧' in code
-            assert code.count(f'FreshAlphaIR case_{index}_fresh_names case_{index}_protected_names case_{index}_expected output') == 2
+        for mode in ((), ("--fresh-rollback",)):
+            translated = run(*mode, "--case", empty, expected,
+                             "--case", empty, expected, source)
+            assert translated.returncode == 0, translated.stderr
+            code = translated.stdout
+            for index in range(2):
+                assert f'def case_{index}_fresh_names : List String := ["FRESH__0", "FRESH__1"]' in code
+                assert f'def case_{index}_protected_names : List String := ["FRESH__99"]' in code
+                assert f'(∃ output : p4programIR, Program_ok case_{index}_input output ∧' in code
+                assert code.count(f'FreshAlphaIR case_{index}_fresh_names case_{index}_protected_names case_{index}_expected output') == 2
+
+        exact = run("--fresh-exact-counter", "--obligations-only",
+                    "--case", empty, expected, source)
+        assert exact.returncode == 0, exact.stderr
+        assert "_fresh_names" not in exact.stdout
+        assert "FreshAlphaIR" not in exact.stdout
         proof = directory / "cases.lean"
         proof.write_text(code + "\n" + (fixtures / "fresh-case-proof.lean").read_text())
         lean = subprocess.run(["lean", "-j", "2", str(proof)], text=True,
