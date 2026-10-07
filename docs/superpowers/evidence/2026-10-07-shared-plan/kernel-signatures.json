@@ -1,0 +1,7 @@
+{
+  "public_relations": 5210,
+  "kernel_types_compared": 10420,
+  "equal": true,
+  "normalization": "erase binder names and metadata only; preserve universe parameters, binder information and implicit instance arguments",
+  "canonical_sha256": "8c3fdae004af8c5ef3aa5a251edbbe09028f6ccf118bb12b5df47e5b3ca5c129"
+}

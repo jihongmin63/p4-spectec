@@ -1,0 +1,83 @@
+{
+  "compiler": "/root/.elan/toolchains/leanprover--lean4---v4.34.1/bin/lean",
+  "cpus": [
+    4,
+    5
+  ],
+  "lean_jobs": 2,
+  "generated": "/tmp/p4-plan-compaction/final",
+  "records": [
+    {
+      "module": "SpecTecProof",
+      "exit": 0,
+      "wall_s": 1.4146361872553825,
+      "user_s": 1.17823,
+      "system_s": 0.232453,
+      "peak_rss_kib": 1677920,
+      "source_bytes": 14870,
+      "source_lines": 314,
+      "source_sha256": "e908232b1309090fd5c47feb4c8c2cdc0c9ba919ddc541891a38165bc7fd9276",
+      "olean_bytes": 1449048
+    },
+    {
+      "module": "RandomCases",
+      "exit": 0,
+      "wall_s": 2.18398841843009,
+      "user_s": 2.838263,
+      "system_s": 0.11201,
+      "peak_rss_kib": 1417136,
+      "source_bytes": 584969,
+      "source_lines": 92,
+      "source_sha256": "274cc8745ef6efd922a857f62a0095feead17519fdd22fb5a943c941dfa46644",
+      "olean_bytes": 6838936
+    },
+    {
+      "module": "AxiomAudit",
+      "exit": 0,
+      "wall_s": 1.6461989330127835,
+      "user_s": 1.405367,
+      "system_s": 0.238553,
+      "peak_rss_kib": 2399260,
+      "source_bytes": 1198,
+      "source_lines": 28,
+      "source_sha256": "ddf70334d7f7af8c2638701501bd5021b8ca703fc9e02cfab80a075ae41db1c9",
+      "olean_bytes": 2648
+    },
+    {
+      "module": "Case0454",
+      "exit": 0,
+      "wall_s": 94.46772003918886,
+      "user_s": 121.519659,
+      "system_s": 1.249934,
+      "peak_rss_kib": 5963904,
+      "source_bytes": 10477,
+      "source_lines": 250,
+      "source_sha256": "9e2647bfe99feb82886a5a5cc750620cdd0c8188ef018c44cf25dbf209fa082c",
+      "olean_bytes": 308611672
+    },
+    {
+      "module": "Case0487",
+      "exit": 0,
+      "wall_s": 365.6225756537169,
+      "user_s": 364.246138,
+      "system_s": 2.260802,
+      "peak_rss_kib": 11199200,
+      "source_bytes": 5118,
+      "source_lines": 129,
+      "source_sha256": "0207045b6b860f699f513cba8b231fee612217d2a009c174b92cf555a3f00bf9",
+      "olean_bytes": 305336216
+    },
+    {
+      "module": "CaseAxioms",
+      "exit": 0,
+      "wall_s": 0.818192939274013,
+      "user_s": 0.6491359999999999,
+      "system_s": 0.16527,
+      "peak_rss_kib": 2367752,
+      "source_bytes": 514,
+      "source_lines": 12,
+      "source_sha256": "c8d900aa5184c192d3febd6c8c0db891b82da76b996b185cbd1a96846d0302e1",
+      "olean_bytes": 2520
+    }
+  ]
+}

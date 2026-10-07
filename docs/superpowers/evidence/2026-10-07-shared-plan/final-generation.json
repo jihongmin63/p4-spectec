@@ -1,0 +1,18 @@
+{
+  "exit": 0,
+  "wall_s": 31.224665354937315,
+  "user_s": 30.697911,
+  "system_s": 0.522981,
+  "peak_rss_kib": 697192,
+  "cpus": [
+    2,
+    3
+  ],
+  "command": [
+    "/tmp/p4-spectec-reified-spec-diagnosis/_build/default/p4spec/lib/lean-skeleton/main.exe",
+    "--emit-modules",
+    "/tmp/p4-plan-compaction/final-generation-pinned",
+    "spec"
+  ],
+  "executable_sha256": "2d93451ed96ba05534e56e316031e9a21071959001bbb88f5f98b9749d54ecea"
+}

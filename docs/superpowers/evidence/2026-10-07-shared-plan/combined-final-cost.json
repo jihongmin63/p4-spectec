@@ -1,0 +1,10 @@
+{
+  "meaning": "Final generated modules plus optional proof support, unchanged goals, two case proofs and axiom audits; excludes measurement/export tools and test-runner overhead",
+  "additional_wall_s": 466.15331217087805,
+  "additional_olean_bytes": 622241040,
+  "additional_source_lines": 825,
+  "additional_source_bytes": 617146,
+  "combined_wall_s": 1954.4171678433195,
+  "combined_olean_bytes": 1704064336,
+  "peak_rss_kib": 11199200
+}

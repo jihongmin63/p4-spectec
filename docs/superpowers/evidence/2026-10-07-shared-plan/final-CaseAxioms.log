@@ -1,0 +1,3 @@
+'SpecTec.case_454_translated_proof' depends on axioms: [propext, Classical.choice, Quot.sound]
+'SpecTec.case_487_translated_proof' depends on axioms: [propext, Classical.choice, Quot.sound]
+Both unchanged rejection theorems pass the axiom whitelist
