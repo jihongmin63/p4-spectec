@@ -20,6 +20,329 @@ let unsupported (at : region) (construct : string) : 'a =
        (Diagnostic.error ~source:"lean" at
           ("Lean skeleton does not support " ^ construct)))
 
+type condition_result = { condition : L.prop; evaluation : terms_result }
+
+let rec translate_condition (env : env) (type_parameters : string list)
+    (functions : (string * L.type_ref) list) (next : int) (exp : S.exp) : condition_result =
+  let recurse : int -> S.exp -> condition_result = translate_condition env type_parameters functions in
+  match exp.it with
+  | UnE (`NotOp, _, value) ->
+      let result : condition_result = recurse next value in
+      { result with condition = L.Not result.condition }
+  | BinE ((`AndOp | `OrOp | `ImplOp | `EquivOp as operator), _, left, right) ->
+      let left : condition_result = recurse next left in
+      let right : condition_result = recurse left.evaluation.next right in
+      let condition : L.prop = match operator with
+        | `AndOp -> L.And (left.condition, right.condition)
+        | `OrOp -> L.Or (left.condition, right.condition)
+        | `ImplOp -> L.Implies (left.condition, right.condition)
+        | `EquivOp -> L.Iff (left.condition, right.condition)
+      in
+      { condition; evaluation = {
+          terms = []; premises = left.evaluation.premises @ right.evaluation.premises;
+          binders = left.evaluation.binders @ right.evaluation.binders;
+          next = right.evaluation.next;
+          helpers = left.evaluation.helpers @ right.evaluation.helpers } }
+  | CmpE (operator, _, left, right) ->
+      if expression_type env type_parameters left <> expression_type env type_parameters right then
+        unsupported exp.at "comparison operands with different runtime types";
+      let evaluation : terms_result = collect_terms (translate_term env type_parameters functions) next [ left; right ] in
+      let operator : L.comparison = match operator with
+        | `EqOp -> L.Eq | `NeOp -> L.Ne | `LtOp -> L.Lt | `LeOp -> L.Le | `GtOp -> L.Gt | `GeOp -> L.Ge
+      in
+      let condition : L.prop = match evaluation.terms with
+        | [ left; right ] -> L.Comparison (operator, left, right)
+        | _ -> assert false
+      in
+      { condition; evaluation }
+  | MemE (element, collection) ->
+      (match expression_type env type_parameters collection with
+      | BuiltinType ("List", [ typ ]) when typ = expression_type env type_parameters element -> ()
+      | _ -> unsupported exp.at "membership in a non-list");
+      let evaluation : terms_result = collect_terms (translate_term env type_parameters functions) next [ element; collection ] in
+      let condition : L.prop = match evaluation.terms with
+        | [ element; collection ] -> L.Membership (element, collection)
+        | _ -> assert false
+      in
+      { condition; evaluation }
+  | _ ->
+      let result : term_result = translate_term env type_parameters functions next exp in
+      { condition = L.IsTrue result.term;
+        evaluation = { terms = []; premises = result.premises; binders = result.binders; next = result.next; helpers = result.helpers } }
+
+let rec translate_premise (env : env) (type_parameters : string list)
+    (functions : (string * L.type_ref) list) (next : int) (premise : S.prem) : terms_result =
+  match premise.it with
+  | RulePr (id, notation, _) | IfHoldPr (id, notation) ->
+      let (application, result) : L.application * terms_result =
+        translate_application env type_parameters functions next id.it [] (Mixfix.args notation)
+      in
+      { result with terms = []; premises = result.premises @ [ L.Holds application ] }
+  | IfNotHoldPr (id, notation) ->
+      let (application, result) : L.application * terms_result =
+        translate_application env type_parameters functions next id.it [] (Mixfix.args notation)
+      in
+      { result with terms = []; premises = result.premises @ [ L.NotHolds (application, premise.at) ] }
+  | IfPr exp ->
+      let result : condition_result = translate_condition env type_parameters functions next exp in
+      { result.evaluation with terms = []; premises = result.evaluation.premises @ [ L.Prop result.condition ] }
+  | LetPr _ -> unsupported premise.at ("LetPr premise " ^ S.Print.string_of_prem premise)
+  | IterPr (body, (iter, variables, outputs)) ->
+      let body : terms_result = translate_premise env type_parameters functions (next + 1) body in
+      translate_iteration env type_parameters functions premise.at next iter (variables @ outputs) body []
+  | DebugPr _ ->
+      { terms = []; premises = []; binders = []; next; helpers = [] }
+
+let translate_branch (env : env) (type_parameters : string list)
+    (relation_name : string) (arity : int) (branch : branch) : L.rule * L.declaration list =
+  if List.length branch.arguments <> arity then
+    unsupported branch.at ("arity mismatch in rule " ^ branch.name ^ " of " ^ relation_name);
+  let env : env = { env with iteration_prefix = relation_name ^ ":" ^ branch.name } in
+  let functions : (string * L.type_ref) list =
+    List.filter_map (function Function (id, typ) -> Some (id.it, typ) | Expression _ -> None) branch.arguments
+  in
+  let translate_argument (next : int) (argument : branch_argument) : term_result =
+    match argument with
+    | Expression exp -> translate_term env type_parameters functions next exp
+    | Function (id, typ) -> pure_term next (L.Variable ("$" ^ id.it, typ))
+  in
+  let result : terms_result = collect_terms translate_argument 0 branch.arguments in
+  let conclusion : L.application =
+    { target = L.Global relation_name;
+      type_arguments = List.map (fun name -> L.TypeParameter name) type_parameters;
+      arguments = result.terms }
+  in
+  let result : terms_result = List.fold_left
+    (fun (result : terms_result) (premise : S.prem) ->
+      let translated : terms_result =
+        translate_premise env type_parameters functions result.next premise
+      in
+      { result with premises = result.premises @ translated.premises;
+        binders = result.binders @ translated.binders; next = translated.next;
+        helpers = result.helpers @ translated.helpers })
+    result branch.premises
+  in
+  let variables : (string * L.type_ref) list =
+    List.concat_map variables_in_term
+      (conclusion.arguments @ List.concat_map Traversal.premise_terms result.premises)
+  in
+  { name = branch.name; binders = unique_binders env branch.at (variables @ result.binders);
+    premises = result.premises; conclusion }, result.helpers
+
+let branch_of_rule (rule : S.rule) : branch =
+  let id, conclusion, premises = rule.it in
+  let name : string = if id.it = "" then "rule" else id.it in
+  {
+    name;
+    arguments = List.map (fun exp -> Expression exp) (Mixfix.args conclusion);
+    premises;
+    at = rule.at;
+  }
+
+let branch_of_clause (type_parameters : string list) (parameters : S.param list)
+    (index : int) (clause : S.clause) : branch =
+  let arguments, result, premises = clause.it in
+  if List.length arguments <> List.length parameters then
+    unsupported clause.at
+      (Printf.sprintf "function clause argument count: expected %d, got %d"
+         (List.length parameters) (List.length arguments));
+  let arguments : branch_argument list =
+    List.mapi
+      (fun position ((parameter : S.param), (argument : S.arg)) ->
+        match parameter.it, argument.it with
+        | ExpP _, ExpA exp -> Expression exp
+        | DefP _, DefA id ->
+            Function
+              (id, translate_parameter_with_parameters type_parameters parameter)
+        | ExpP _, DefA _ ->
+            unsupported argument.at
+              (Printf.sprintf
+                 "function clause argument %d: expected expression, got function"
+                 (position + 1))
+        | DefP _, ExpA _ ->
+            unsupported argument.at
+              (Printf.sprintf
+                 "function clause argument %d: expected function, got expression"
+                 (position + 1)))
+      (List.combine parameters arguments)
+  in
+  {
+    name = "case_" ^ string_of_int index;
+    arguments = arguments @ [ Expression result ];
+    premises;
+    at = clause.at;
+  }
+
+let substitute_application (bindings : (string * L.type_ref) list)
+    (application : L.application) : L.application =
+  Traversal.map_application_types (substitute_type_parameters bindings) application
+
+(* SpecTec uses a type name as a variable name, as in [$repeat_<X>(X, n)].
+   A Lean binder [X] would shadow the type parameter [X], so rename the type
+   parameter instead of the variable. *)
+let rename_type_parameters (env : env) (type_parameters : string list)
+    (argument_types : L.type_ref list) (rules : L.rule list) :
+    string list * L.type_ref list * L.rule list =
+  let binder_names : string list =
+    List.concat_map (fun (rule : L.rule) -> List.map fst rule.binders) rules
+  in
+  let taken (name : string) : bool =
+    List.mem name binder_names
+    || List.mem name type_parameters
+    || StringMap.mem name env.constructors
+    || StringMap.mem name env.aliases
+    || StringMap.mem name env.structures
+  in
+  let fresh (name : string) : string =
+    let rec search (index : int) : string =
+      let candidate : string =
+        if index = 0 then name ^ "_T" else name ^ "_T" ^ string_of_int index
+      in
+      if taken candidate then search (index + 1) else candidate
+    in
+    search 0
+  in
+  let renamings : (string * string) list =
+    List.filter_map
+      (fun name ->
+        if List.mem name binder_names then Some (name, fresh name) else None)
+      type_parameters
+  in
+  if renamings = [] then (type_parameters, argument_types, rules)
+  else
+    let bindings : (string * L.type_ref) list =
+      List.map (fun (name, renamed) -> (name, L.TypeParameter renamed)) renamings
+    in
+    let rename (name : string) : string =
+      Option.value ~default:name (List.assoc_opt name renamings)
+    in
+    ( List.map rename type_parameters,
+      List.map (substitute_type_parameters bindings) argument_types,
+      List.map
+        (fun (rule : L.rule) ->
+          {
+            rule with
+            binders =
+              List.map
+                (fun (name, typ) ->
+                  (name, substitute_type_parameters bindings typ))
+                rule.binders;
+            premises = List.map (Traversal.map_premise_types (substitute_type_parameters bindings)) rule.premises;
+            conclusion = substitute_application bindings rule.conclusion;
+          })
+        rules )
+
+let translate_relation_unrenamed (env : env) (name : string) (type_parameters : string list)
+    (argument_types : L.type_ref list) (branches : branch list)
+    (notation : L.notation_part list option) : L.declaration list =
+  let arity : int = List.length argument_types in
+  let (_, rules, helpers) : string list * L.rule list * L.declaration list =
+    List.fold_left
+      (fun (used, rules, helpers) (branch : branch) ->
+        let rec unique_name (index : int) : string =
+          let candidate : string =
+            if index = 1 then branch.name
+            else branch.name ^ "_" ^ string_of_int index
+          in
+          if List.mem candidate used then unique_name (index + 1) else candidate
+        in
+        let name_rule : string = unique_name 1 in
+        let (rule, emitted) : L.rule * L.declaration list =
+          translate_branch env type_parameters name arity
+            { branch with name = name_rule }
+        in
+        (name_rule :: used, rule :: rules, helpers @ emitted))
+      ([], [], []) branches
+  in
+  let rules : L.rule list = List.rev rules in
+  L.Relation { name; type_parameters; argument_types; rules; notation } :: helpers
+
+let rename_relation_declarations (env : env) (type_parameters : string list)
+    (declarations : L.declaration list) : L.declaration list =
+  (* Helpers in a mutual block must use exactly their parent's parameters,
+     including renamings needed to avoid element-variable shadowing. *)
+  let all_rules : L.rule list = List.concat_map
+    (function L.Relation { rules; _ } -> rules | _ -> []) declarations
+  in
+  let (renamed, _, _) : string list * L.type_ref list * L.rule list =
+    rename_type_parameters env type_parameters [] all_rules
+  in
+  let bindings : (string * L.type_ref) list =
+    List.combine type_parameters (List.map (fun name -> L.TypeParameter name) renamed)
+  in
+  let substitute : L.type_ref -> L.type_ref = substitute_type_parameters bindings in
+  List.map
+    (function
+      | L.Relation relation -> L.Relation
+          { relation with type_parameters = renamed;
+            argument_types = List.map substitute relation.argument_types;
+            rules = List.map (fun (rule : L.rule) ->
+              { rule with binders = List.map (fun (name, typ) -> name, substitute typ) rule.binders;
+                premises = List.map (Traversal.map_premise_types substitute) rule.premises;
+                conclusion = substitute_application bindings rule.conclusion }) relation.rules }
+      | declaration -> declaration)
+    declarations
+
+let translate_relation (env : env) (name : string) (type_parameters : string list)
+    (argument_types : L.type_ref list) (branches : branch list)
+    (notation : L.notation_part list option) : L.declaration list =
+  rename_relation_declarations env type_parameters
+    (translate_relation_unrenamed env name type_parameters argument_types branches notation)
+
+let translate_otherwise_relation (env : env) (name : string)
+    (type_parameters : string list) (argument_types : L.type_ref list)
+    (branches : branch list) (otherwise : branch) (inputs : Lang.Hints.Input.t)
+    (notation : L.notation_part list option) : L.declaration list =
+  let regular_name : string = name ^ ":regular" in
+  let regular : L.declaration list =
+    translate_relation_unrenamed env regular_name type_parameters argument_types branches None
+  in
+  let public : L.declaration list =
+    translate_relation_unrenamed env name type_parameters argument_types [ otherwise ] notation
+  in
+  let binders : (string * L.type_ref) list =
+    List.mapi (fun index typ -> "arg:" ^ string_of_int index, typ) argument_types
+  in
+  let application : L.application =
+    { target = L.Global name;
+      type_arguments = List.map (fun name -> L.TypeParameter name) type_parameters;
+      arguments = List.map (fun (name, typ) -> L.Variable (name, typ)) binders }
+  in
+  let wrapper : L.rule =
+    { name = "regular"; binders;
+      premises = [ L.Holds { application with target = L.Global regular_name } ];
+      conclusion = application }
+  in
+  let guard (rule : L.rule) : L.rule =
+    let (arguments, _) : L.term list * L.term list =
+      Lang.Hints.Input.split inputs rule.conclusion.arguments
+    in
+    let (_, output_types) : L.type_ref list * L.type_ref list =
+      Lang.Hints.Input.split inputs argument_types
+    in
+    let outputs : (string * L.type_ref) list =
+      List.mapi (fun index typ -> "otherwise:" ^ string_of_int index, typ) output_types
+    in
+    let negative : L.application =
+      { rule.conclusion with target = L.Global regular_name;
+        arguments = Lang.Hints.Input.combine inputs arguments
+          (List.map (fun (name, typ) -> L.Variable (name, typ)) outputs) }
+    in
+    { rule with premises = L.NotExists (outputs, negative, otherwise.at) :: rule.premises }
+  in
+  let public : L.declaration list = match public with
+    | L.Relation relation :: helpers ->
+        let rules : L.rule list = List.map guard relation.rules in
+        let rec wrapper_name (index : int) : string =
+          let candidate : string = if index = 0 then "regular" else "regular_" ^ string_of_int index in
+          if List.exists (fun (rule : L.rule) -> rule.name = candidate) rules then
+            wrapper_name (index + 1)
+          else candidate
+        in
+        L.Relation { relation with rules = { wrapper with name = wrapper_name 0 } :: rules } :: helpers
+    | _ -> unsupported otherwise.at ("missing otherwise relation " ^ name)
+  in
+  rename_relation_declarations env type_parameters (regular @ public)
 let rec validate_names (at : region) (names : string list) : unit =
   match names with
   | [] -> ()
