@@ -2981,7 +2981,7 @@ let generated_declarations (env : env) (program : S.spec)
   let terms : L.term list = collected_terms declarations in
   coercion_declarations env program terms @ membership_declarations program terms
 
-let translate ?(fresh_rollback = false) (program : S.spec) :
+let translate ?(fresh_counter = true) ?(fresh_rollback = false) (program : S.spec) :
     (L.located_declaration list, Diagnostic.t) result =
   let env : env = build_env program in
   try
@@ -2996,13 +2996,14 @@ let translate ?(fresh_rollback = false) (program : S.spec) :
     in
     let declarations : L.located_declaration list =
       declarations @ generated_declarations env program declarations
-      |> Fresh_state.lower ~rollback:fresh_rollback
+      |> (if fresh_counter then Fresh_state.lower ~rollback:fresh_rollback
+          else Fun.id)
       |> Relation_optimizer.prune_helpers
     in
     Ok (equality_parameters declarations)
   with Unsupported_il diagnostic -> Error diagnostic
 
-let translate_all ?(fresh_rollback = false) (program : S.spec) :
+let translate_all ?(fresh_counter = true) ?(fresh_rollback = false) (program : S.spec) :
     L.located_declaration list * Diagnostic.t list =
   let env : env = build_env program in
   let (declarations, diagnostics) :
@@ -3022,7 +3023,8 @@ let translate_all ?(fresh_rollback = false) (program : S.spec) :
   let declarations : L.located_declaration list = List.rev declarations in
   let declarations : L.located_declaration list =
     declarations @ generated_declarations env program declarations
-    |> Fresh_state.lower ~rollback:fresh_rollback
+    |> (if fresh_counter then Fresh_state.lower ~rollback:fresh_rollback
+        else Fun.id)
     |> Relation_optimizer.prune_helpers
     |> equality_parameters
   in

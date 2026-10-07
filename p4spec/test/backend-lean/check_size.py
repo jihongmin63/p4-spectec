@@ -49,7 +49,8 @@ def generated_sizes(exe, make_fixture, counts):
         for count in counts:
             path.write_text(make_fixture(count))
             generated = subprocess.run(
-                [str(exe.resolve()), str(path)], capture_output=True, check=True
+                [str(exe.resolve()), '--fresh-exact-counter', str(path)],
+                capture_output=True, check=True
             ).stdout
             sizes.append(len(generated))
     return sizes

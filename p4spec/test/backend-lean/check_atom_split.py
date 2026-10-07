@@ -34,7 +34,8 @@ def main():
                 specification = (args.fixtures / f'{name}.watsup').read_text()
             source.write_text(specification + '\n' + padding)
             generated = subprocess.run(
-                [str(args.exe.resolve()), str(source)], check=True, capture_output=True, text=True
+                [str(args.exe.resolve()), '--fresh-exact-counter', str(source)],
+                check=True, capture_output=True, text=True
             ).stdout
             # A constructor-width budget catches the superlinear Lean auxiliary
             # generation even on machines where an elapsed-time test is noisy.

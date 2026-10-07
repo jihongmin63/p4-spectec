@@ -6,21 +6,33 @@ The executable translates elaborated SpecTec IL into Lean source. Its path is:
 2. `pipeline.ml` selects strict translation or best-effort translation, then sequences the backend stages.
 3. `translator.ml` lowers IL declarations into the Lean AST in `ast.ml`.
 4. `order.ml` resolves declaration dependencies, groups mutual definitions, and removes invalid dependency chains in best-effort mode.
-5. `printer.ml` renders the ordered Lean AST as source.
+5. `relation_graph.ml` preserves edge polarity, propagates typed named callback targets, and orders relation SCCs.
+6. `printer.ml` renders the ordered Lean AST as source.
 
 ## Module Responsibilities
 
 - `ast.ml` defines the source alias and the Lean intermediate representation.
 - `translator.ml` handles IL types, expressions, premises, relations, tables, and declarations. Tables become row-selector definitions paired with relation rules. `builtin.ml` provides total builtins as Lean definitions and `builtin_relation.ml` provides partial or value-comparing builtins as relations.
 - `order.ml` validates and orders Lean declarations. `traversal.ml` provides recursive operations over the Lean AST used by ordering and translation.
-- `printer.ml` serializes declarations and terms. It collects all translated relations into one `Atom` and `InProgram`, emits user-facing `Prop` wrappers and rule introduction theorems, and turns relation values into calls in that same program. `wfs_backend.ml` contains the shared Lean `Rule`, `Program`, and well-founded semantics definitions. `identifier.ml` escapes names for Lean syntax.
+- `printer.ml` serializes declarations and terms. By default it emits a private `Atom` and `InProgram` for each dependency SCC, direct public `Prop` judgements, and relation-local rule introduction theorems. Calls to earlier SCCs are side judgements; only same-SCC calls remain WFS atoms. `wfs_backend.ml` contains the shared Lean `Rule`, `Program`, well-founded semantics, and checked program-equivalence lemmas. `identifier.ml` escapes names for Lean syntax.
 - `main.ml` owns command-line behavior; `pipeline.ml` owns the translation-to-printing flow.
 
 Translation stops at the first translation or ordering error. `--keep-going` retains independent declarations and reports rejected declarations.
 
 ## Relation semantics
 
-Each source rule contributes a member of the shared `InProgram` relation. Positive relation premises become positive atoms, explicit negative premises become negative atoms, and pure propositions become side conditions. The shared WFS backend interprets the entire program; a public relation is `SpecTecWFS.Holds InProgram` of its atom. Its rule theorems are proved from `InProgram` constructors and `SpecTecWFS.Holds.rule`.
+The default translation computes SCCs from positive, negative, expression, and typed callback calls. Each source rule contributes a member of its SCC-local `InProgram`. Same-SCC positive and negative premises become local atoms; calls to an earlier SCC become direct public success or `.fails` side judgements. A public relation is `SpecTecWFS.Holds` of its local atom. `.fails` is always available, while `.undetermined` is emitted only for a graph-cyclic SCC. Named callback dispatch belongs to the invoking SCC and points only at the propagated typed targets; external callbacks remain explicit boundary rules.
+
+The generated root namespace has no program-wide `Atom`, `InProgram`, membership alias tree, or head-property tree. A component still has a small local atom, membership relation, and head-property lemma for local induction. Extern-type and P4-model variables are emitted in sections containing the declarations and components that depend on them. Dependency closure is explicit: an unrelated component does not acquire those instances merely because another source declaration uses an extern.
+
+`SpecTecWFS.Program.Equivalent` requires bidirectional membership for every rule. Its congruence theorems transport `Holds`, `Fails`, and `Undetermined` only after that condition is proved; graph reachability alone is not presented as semantic equivalence with the former global program. `--dump-relation-graph` prints the checked SCCs, signed/callback edges, typed callback sites, and external callback boundaries used by the printer.
+
+The old global program is retained only in explicit compatibility modes:
+
+- `--fresh-exact-counter` selects the former program-wide `Atom`/`InProgram` and concrete counter lowering.
+- `--fresh-rollback` selects the distinct rollback/alpha experiment.
+
+Generated source begins with a mode marker. The test suite passes the exact-counter option explicitly for legacy global proofs and size/split checks; default-mode locality and legacy reproducibility are tested separately.
 
 Each leaf of the bounded `InProgram` tree has a shared `head_property` theorem.
 The optional `SpecTecProof.lean` module provides `spec_invariant`: it builds
@@ -31,8 +43,8 @@ makes a previously proved invariant available on positive premises. Negative
 premises retain `SpecTecWFS.Fails`, and the command rejects extra axioms.
 Generation size checks include these common proof lemmas.
 
-The default fresh-ID model reproduces the interpreter's counter, including
-allocations in failed clauses. `--fresh-rollback` selects a proof abstraction:
+The `--fresh-exact-counter` compatibility model reproduces the interpreter's
+counter, including allocations in failed clauses. `--fresh-rollback` selects a proof abstraction:
 successful calls thread an entry and exit counter, but failure predicates have
 only an entry counter. Every alternative starts at the same entry counter, so
 failed allocations do not connect the state of different clauses. Successful
@@ -58,12 +70,12 @@ The interpreter is reused across cases, with its counter reset for each one.
 This is an explicit abstraction, rather than an equivalence theorem for every
 SpecTec program. Fresh spelling can affect comparisons, capture checks,
 string-derived identifiers and ordered sets; rollback can therefore change
-observable behavior in such programs. Keep the default exact model for those
-proofs. `--obligations-only --fresh-rollback` requires importing semantics
+observable behavior in such programs. Use `--fresh-exact-counter` for those
+legacy proofs. `--obligations-only --fresh-rollback` requires importing semantics
 generated with the same flag. Oracle capture flags use the exact interpreter
 and cannot be combined with `--fresh-rollback`.
 
-For a function with `otherwise`, translation creates `regular inputs result`, `enabled inputs`, and the public result atom. Any regular result establishes `enabled`, even when the result is unknown. The fallback rule requires `SpecTecWFS.Fails InProgram (enabled inputs)`, so an undetermined enabled atom does not select the fallback. Function arguments are `SpecTecRelationRef` values; their applications use `Atom.relation_call`, and named functions have dispatch rules in the same program.
+In the legacy modes, a function with `otherwise` creates `regular inputs result`, `enabled inputs`, and the public result atom. Any regular result establishes `enabled`, even when the result is unknown. The fallback rule requires WFS failure of `enabled`, so an undetermined enabled atom does not select the fallback. In the default mode these helpers are partitioned by the same typed dependency graph; the ordered evaluator layer is responsible for source-order `Unmatch`/abort behavior.
 
 The `$union_set`, `$unions_set`, `$diff_set`, and `$intersect_set` builtins
 translate only when their key type expands to `text`. Their Lean definitions

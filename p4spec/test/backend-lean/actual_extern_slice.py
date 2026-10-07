@@ -29,7 +29,8 @@ def main() -> None:
     parser.add_argument("--spec", required=True)
     args = parser.parse_args()
     result = subprocess.run(
-        [args.exe, "--keep-going", args.spec], capture_output=True, text=True,
+        [args.exe, "--fresh-exact-counter", "--keep-going", args.spec],
+        capture_output=True, text=True,
         check=False,
     )
     source = result.stdout

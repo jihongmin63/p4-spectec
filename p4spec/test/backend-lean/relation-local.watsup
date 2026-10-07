@@ -1,0 +1,52 @@
+extern syntax json
+
+syntax declaration = CONSTANTDECLARATION nat | ERRORDECLARATION nat
+syntax value = ZERO | WRAP value
+
+var n : nat
+var d : declaration
+var v : value
+
+relation Nat_ok:
+  |- nat
+  hint(input %0)
+
+rule Nat_ok/zero:
+  |- 0
+
+relation Decl_ok:
+  |- declaration
+  hint(input %0)
+
+rule Decl_ok/constant:
+  |- CONSTANTDECLARATION n
+  -- Nat_ok: |- n
+
+rule Decl_ok/error:
+  |- ERRORDECLARATION n
+
+relation CycleA:
+  |- nat
+  hint(input %0)
+
+relation CycleB:
+  |- nat
+  hint(input %0)
+
+rule CycleA/from_not_B:
+  |- 0
+  -- CycleB:/ |- 0
+
+rule CycleB/from_not_A:
+  |- 0
+  -- CycleA:/ |- 0
+
+dec $invoke(def $step(value) : value, value) : value
+def $invoke(def $step, v) = $step(v)
+
+dec $forward(def $step(value) : value, value) : value
+def $forward(def $step, v) = $invoke(def $step, v)
+
+dec $recursive(value) : value
+def $recursive(ZERO) = ZERO
+def $recursive(WRAP v) = $forward(def $recursive, v)

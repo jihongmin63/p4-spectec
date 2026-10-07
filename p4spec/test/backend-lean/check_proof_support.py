@@ -40,7 +40,9 @@ def main():
             selected += 1
             source = root / (name + '.watsup')
             source.write_text(spec)
-            translated = run([str(args.exe.resolve()), str(source)])
+            translated = run([
+                str(args.exe.resolve()), "--fresh-exact-counter", str(source)
+            ])
             target = root / (name + '.lean')
             target.write_text('import SpecTecProof\n' + translated + '\n' + proof)
             output = run(['lean', '-j', '2', str(target)], env=env, ok=ok)

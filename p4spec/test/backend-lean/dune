@@ -35,6 +35,21 @@
  (deps (alias relation-graph-test)))
 
 (rule
+ (alias relation-local-test)
+ (deps check_relation_local.py relation-local.watsup relation-local-proof.lean
+  relation-local-legacy-proof.lean)
+ (action
+  (run python3 %{dep:check_relation_local.py}
+   --exe %{exe:../../lib/lean-skeleton/main.exe}
+   --source %{dep:relation-local.watsup}
+   --proof %{dep:relation-local-proof.lean}
+   --legacy-proof %{dep:relation-local-legacy-proof.lean})))
+
+(alias
+ (name backend-lean)
+ (deps (alias relation-local-test)))
+
+(rule
  (alias backend-lean)
  (deps check_fresh_case.py fresh-case.watsup fresh-case-proof.lean case-empty.p4)
  (action
@@ -90,7 +105,7 @@
  (action
   (with-stdout-to set.lean
    (progn
-    (run %{exe:../../lib/lean-skeleton/main.exe} %{dep:set.watsup})
+    (run %{exe:../../lib/lean-skeleton/main.exe} --fresh-exact-counter %{dep:set.watsup})
     (cat %{dep:set-proof.lean})))))
 
 (rule
@@ -105,7 +120,7 @@
   (with-stderr-to set-nontext.actual
    (with-accepted-exit-codes 1
     (run
-     %{exe:../../lib/lean-skeleton/main.exe}
+     %{exe:../../lib/lean-skeleton/main.exe} --fresh-exact-counter
      %{dep:set-nontext.watsup})))))
 
 (rule
@@ -120,7 +135,7 @@
  (action
   (with-stdout-to tuple.lean
    (progn
-    (run %{exe:../../lib/lean-skeleton/main.exe} %{dep:tuple.watsup})
+    (run %{exe:../../lib/lean-skeleton/main.exe} --fresh-exact-counter %{dep:tuple.watsup})
     (cat %{dep:tuple-proof.lean})))))
 
 (rule
@@ -134,7 +149,7 @@
  (action
   (with-stdout-to notation.lean
    (progn
-    (run %{exe:../../lib/lean-skeleton/main.exe} %{dep:notation.watsup})
+    (run %{exe:../../lib/lean-skeleton/main.exe} --fresh-exact-counter %{dep:notation.watsup})
     (cat %{dep:notation-proof.lean})))))
 
 (rule
@@ -148,7 +163,7 @@
  (action
   (with-stdout-to table.lean
    (progn
-    (run %{exe:../../lib/lean-skeleton/main.exe} %{dep:table.watsup})
+    (run %{exe:../../lib/lean-skeleton/main.exe} --fresh-exact-counter %{dep:table.watsup})
     (cat %{dep:table-proof.lean})))))
 
 (rule
@@ -162,7 +177,7 @@
  (action
   (with-stdout-to fresh.lean
    (progn
-    (run %{exe:../../lib/lean-skeleton/main.exe} %{dep:fresh.watsup})
+    (run %{exe:../../lib/lean-skeleton/main.exe} --fresh-exact-counter %{dep:fresh.watsup})
     (cat %{dep:fresh-proof.lean})))))
 
 (rule
@@ -176,7 +191,7 @@
  (action
   (with-stdout-to update.lean
    (progn
-    (run %{exe:../../lib/lean-skeleton/main.exe} %{dep:update.watsup})
+    (run %{exe:../../lib/lean-skeleton/main.exe} --fresh-exact-counter %{dep:update.watsup})
     (cat %{dep:update-proof.lean})))))
 
 (rule
@@ -190,7 +205,7 @@
  (action
   (with-stdout-to slice.lean
    (progn
-    (run %{exe:../../lib/lean-skeleton/main.exe} %{dep:slice.watsup})
+    (run %{exe:../../lib/lean-skeleton/main.exe} --fresh-exact-counter %{dep:slice.watsup})
     (cat %{dep:slice-proof.lean})))))
 
 (rule
@@ -204,7 +219,7 @@
  (action
   (with-stdout-to decidable-eq.lean
    (progn
-    (run %{exe:../../lib/lean-skeleton/main.exe} %{dep:decidable-eq.watsup})
+    (run %{exe:../../lib/lean-skeleton/main.exe} --fresh-exact-counter %{dep:decidable-eq.watsup})
     (cat %{dep:decidable-eq-proof.lean})))))
 
 (rule
@@ -218,7 +233,7 @@
  (action
   (with-stdout-to decidable-eq-shadow.lean
    (progn
-    (run %{exe:../../lib/lean-skeleton/main.exe} %{dep:decidable-eq-shadow.watsup})
+    (run %{exe:../../lib/lean-skeleton/main.exe} --fresh-exact-counter %{dep:decidable-eq-shadow.watsup})
     (cat %{dep:decidable-eq-shadow-proof.lean})))))
 
 (rule
@@ -233,7 +248,7 @@
   (with-stderr-to decidable-eq-unsupported.actual
    (with-accepted-exit-codes 1
     (run
-     %{exe:../../lib/lean-skeleton/main.exe}
+     %{exe:../../lib/lean-skeleton/main.exe} --fresh-exact-counter
      %{dep:decidable-eq-unsupported.watsup})))))
 
 (rule
@@ -250,7 +265,7 @@
  (action
   (with-stdout-to print.lean
    (progn
-    (run %{exe:../../lib/lean-skeleton/main.exe} %{dep:print.watsup})
+    (run %{exe:../../lib/lean-skeleton/main.exe} --fresh-exact-counter %{dep:print.watsup})
     (cat %{dep:print-proof.lean})))))
 
 (rule
@@ -264,7 +279,7 @@
  (action
   (with-stdout-to relation-wfs.lean
    (progn
-    (run %{exe:../../lib/lean-skeleton/main.exe} %{dep:relation-wfs.watsup})
+    (run %{exe:../../lib/lean-skeleton/main.exe} --fresh-exact-counter %{dep:relation-wfs.watsup})
     (cat %{dep:relation-wfs-proof.lean})))))
 
 (rule
@@ -278,7 +293,7 @@
  (action
   (with-stdout-to extern-model.lean
    (progn
-    (run %{exe:../../lib/lean-skeleton/main.exe} %{dep:extern-model.watsup})
+    (run %{exe:../../lib/lean-skeleton/main.exe} --fresh-exact-counter %{dep:extern-model.watsup})
     (cat %{dep:extern-model-proof.lean})))))
 
 (rule
@@ -287,7 +302,7 @@
  (action
   (with-stdout-to wfs-composition.lean
    (progn
-    (run %{exe:../../lib/lean-skeleton/main.exe} %{dep:relation-wfs.watsup})
+    (run %{exe:../../lib/lean-skeleton/main.exe} --fresh-exact-counter %{dep:relation-wfs.watsup})
     (cat %{dep:wfs-composition-proof.lean})))))
 
 (rule
@@ -315,7 +330,7 @@
  (deps extern-syntax-only.watsup)
  (action
   (with-stdout-to extern-syntax-only.lean
-   (run %{exe:../../lib/lean-skeleton/main.exe}
+   (run %{exe:../../lib/lean-skeleton/main.exe} --fresh-exact-counter
     %{dep:extern-syntax-only.watsup}))))
 
 (rule
@@ -328,7 +343,7 @@
  (deps extern-wfs.watsup)
  (action
   (with-stdout-to extern-wfs.lean
-   (run %{exe:../../lib/lean-skeleton/main.exe}
+   (run %{exe:../../lib/lean-skeleton/main.exe} --fresh-exact-counter
     %{dep:extern-wfs.watsup}))))
 
 (rule
@@ -387,7 +402,7 @@
  (action
   (with-stdout-to case-obligation.lean
    (run %{exe:../../lib/lean-skeleton/main.exe}
-    --case %{dep:case-empty.p4} %{dep:case-oracle.lean}
+    --fresh-exact-counter --case %{dep:case-empty.p4} %{dep:case-oracle.lean}
     --reject-case %{dep:case-semicolon.p4}
     %{dep:case-obligation.watsup}))))
 
@@ -436,7 +451,7 @@
  (action
   (with-stdout-to case-compressed.lean
    (run %{exe:../../lib/lean-skeleton/main.exe}
-    --case %{dep:case-empty.p4} %{dep:case-oracle.lean.gz}
+    --fresh-exact-counter --case %{dep:case-empty.p4} %{dep:case-oracle.lean.gz}
     %{dep:case-obligation.watsup}))))
 
 (rule
@@ -537,7 +552,7 @@
  (action
   (with-stdout-to fresh-regression.lean
    (progn
-    (run %{exe:../../lib/lean-skeleton/main.exe} %{dep:fresh-regression.watsup})
+    (run %{exe:../../lib/lean-skeleton/main.exe} --fresh-exact-counter %{dep:fresh-regression.watsup})
     (cat %{dep:fresh-regression-proof.lean})))))
 
 (rule
@@ -558,7 +573,7 @@
  (action
   (with-stdout-to prefix-regression.lean
    (progn
-    (run %{exe:../../lib/lean-skeleton/main.exe} %{dep:prefix-regression.watsup})
+    (run %{exe:../../lib/lean-skeleton/main.exe} --fresh-exact-counter %{dep:prefix-regression.watsup})
     (cat %{dep:prefix-regression-proof.lean})))))
 
 (rule
@@ -614,7 +629,7 @@
  (action
   (with-stdout-to rule-shadow.lean
    (progn
-    (run %{exe:../../lib/lean-skeleton/main.exe} %{dep:rule-shadow.watsup})
+    (run %{exe:../../lib/lean-skeleton/main.exe} --fresh-exact-counter %{dep:rule-shadow.watsup})
     (cat %{dep:rule-shadow-proof.lean})))))
 
 (rule

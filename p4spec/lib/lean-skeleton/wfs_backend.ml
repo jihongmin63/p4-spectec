@@ -14,6 +14,15 @@ structure Rule (Atom : Type u) where
 abbrev Program (Atom : Type u) := Rule Atom → Prop
 abbrev Interpretation (Atom : Type u) := Atom → Prop
 
+/-- Auditable graph facts used to select a local WFS program.  This metadata
+    records the decomposition; it is not itself an equivalence proof. -/
+structure ComponentMetadata where
+  relations : List String
+  dependencies : List String
+  recursive : Bool
+  negativeCycle : Bool
+  externalCallback : Bool
+
 def All {Atom : Type u} (P : Atom → Prop) : List Atom → Prop
   | [] => True
   | atom :: rest => P atom ∧ All P rest
@@ -234,6 +243,35 @@ theorem Holds.positive_iff_derives {Atom : Type u}
     apply lower_prefixed program
     exact (gamma_positive program positiveProgram (fun _ => False)
       (upper program) atom).mp proof
+
+/-- Two program presentations are interchangeable only after every rule
+    membership proposition has been related in both directions.  Generated
+    SCC metadata uses this as the final checked boundary; graph reachability
+    alone is deliberately not a semantic equivalence proof. -/
+def Program.Equivalent {Atom : Type u}
+    (left right : Program Atom) : Prop :=
+  ∀ rule, left rule ↔ right rule
+
+theorem Program.eq_of_equivalent {Atom : Type u}
+    {left right : Program Atom} (same : Program.Equivalent left right) :
+    left = right := by
+  funext rule
+  exact propext (same rule)
+
+theorem Holds.program_congr {Atom : Type u}
+    {left right : Program Atom} (same : Program.Equivalent left right)
+    (atom : Atom) : Holds left atom ↔ Holds right atom := by
+  rw [Program.eq_of_equivalent same]
+
+theorem Fails.program_congr {Atom : Type u}
+    {left right : Program Atom} (same : Program.Equivalent left right)
+    (atom : Atom) : Fails left atom ↔ Fails right atom := by
+  rw [Program.eq_of_equivalent same]
+
+theorem Undetermined.program_congr {Atom : Type u}
+    {left right : Program Atom} (same : Program.Equivalent left right)
+    (atom : Atom) : Undetermined left atom ↔ Undetermined right atom := by
+  rw [Program.eq_of_equivalent same]
 
 end SpecTecWFS
 |lean}

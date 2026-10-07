@@ -11,7 +11,7 @@ def check_recursive_groups(exe, temp):
     path = Path(temp) / 'recursive.watsup'
     path.write_text('relation Deep: |- nat\n  hint(input %0)\n' + '\n'.join(
         f'rule Deep/r{i}: |- {i}' for i in range(4097)))
-    generated = subprocess.run([str(exe.resolve()), str(path)], capture_output=True,
+    generated = subprocess.run([str(exe.resolve()), '--fresh-exact-counter', str(path)], capture_output=True,
                                text=True, check=True).stdout
     lean = Path(temp) / 'recursive.lean'
     lean.write_text(generated + """
@@ -59,7 +59,7 @@ dec $polyPrint<X>(X) : text
 def $polyPrint<X>(X) = $print_<X>(X)
 '''
             path.write_text(specification + '\n' + padding)
-            generated = subprocess.run([str(args.exe.resolve()), str(path)],
+            generated = subprocess.run([str(args.exe.resolve()), '--fresh-exact-counter', str(path)],
                                        capture_output=True, text=True, check=True).stdout
             widths = [len(re.findall(r'^  \| ', body, re.M)) for body in re.findall(
                 r'^inductive (?:InProgram|«InProgram:[^»]+»)[^\n]*\n(.*?)(?=\n\n)',

@@ -5,6 +5,7 @@ type options = {
   includes_p4 : string list;
   cases : (Case_obligation.expectation * string * string option) list;
   keep_going : bool;
+  fresh_exact_counter : bool;
   fresh_rollback : bool;
   obligations_only : bool;
   dump_output : string option;
@@ -15,7 +16,7 @@ type options = {
 }
 
 let usage =
-  "Usage: lean-skeleton [--keep-going] [--fresh-rollback] [--obligations-only] \
+  "Usage: lean-skeleton [--keep-going] [--fresh-exact-counter | --fresh-rollback] [--obligations-only] \
    [--case P4 EXPECTED | --reject-case P4 | --manifest TSV]... \
    [--case-range START COUNT] \
    [--dump-output P4 | --check-rejection P4 | --batch-cases PATHS | \
@@ -65,6 +66,8 @@ let parse_options arguments =
         includes_p4 = List.rev options.includes_p4;
         cases = List.rev options.cases }
     | "--keep-going" :: rest -> loop { options with keep_going = true } rest
+    | "--fresh-exact-counter" :: rest ->
+        loop { options with fresh_exact_counter = true } rest
     | "--fresh-rollback" :: rest -> loop { options with fresh_rollback = true } rest
     | "--dump-relation-graph" :: rest ->
         loop { options with dump_relation_graph = true } rest
@@ -100,7 +103,8 @@ let parse_options arguments =
         loop { options with paths_spec = path :: options.paths_spec } rest
   in
   loop { paths_spec = []; includes_p4 = []; cases = [];
-         keep_going = false; fresh_rollback = false; obligations_only = false; dump_output = None;
+         keep_going = false; fresh_exact_counter = false; fresh_rollback = false;
+         obligations_only = false; dump_output = None;
          check_rejection = None; batch_cases = None; case_range = None;
          dump_relation_graph = false } arguments
 
@@ -317,6 +321,9 @@ let () =
      (options.obligations_only && options.cases = []) then (
     prerr_endline usage;
     exit 2);
+  if options.fresh_exact_counter && options.fresh_rollback then (
+    prerr_endline "--fresh-exact-counter and --fresh-rollback are distinct modes";
+    exit 2);
   if options.keep_going && options.cases <> [] && not options.obligations_only then (
     prerr_endline
       "--keep-going cannot emit case propositions; use --obligations-only";
@@ -331,7 +338,8 @@ let () =
   | _ -> ());
   if (options.dump_output <> None || options.check_rejection <> None ||
       options.batch_cases <> None) &&
-     (options.cases <> [] || options.obligations_only || options.keep_going || options.fresh_rollback ||
+     (options.cases <> [] || options.obligations_only || options.keep_going
+      || options.fresh_exact_counter || options.fresh_rollback ||
       options.case_range <> None ||
       List.length (List.filter Option.is_some
         [options.dump_output; options.check_rejection; options.batch_cases]) > 1) then (
@@ -339,7 +347,7 @@ let () =
     exit 2);
   if options.dump_relation_graph &&
      (options.cases <> [] || options.obligations_only || options.keep_going
-      || options.fresh_rollback || options.case_range <> None
+      || options.fresh_exact_counter || options.fresh_rollback || options.case_range <> None
       || options.dump_output <> None || options.check_rejection <> None
       || options.batch_cases <> None) then (
     prerr_endline
@@ -380,15 +388,18 @@ let () =
           try Ok (if cases = [] then "" else Case_obligation.render ~start spec_il cases)
           with Translator.Unsupported_il diagnostic -> Error diagnostic
         in
+        let mode = if options.fresh_rollback then Pipeline.FreshRollback
+          else if options.fresh_exact_counter then Pipeline.FreshExactCounter
+          else Pipeline.RelationLocal in
         if options.obligations_only then Ok (obligations, [])
         else if options.keep_going then
           let (lean_code, diagnostics) : string * Diagnostic.t list =
-            Pipeline.transpile_all ~fresh_rollback:options.fresh_rollback spec_il
+            Pipeline.transpile_all ~mode spec_il
           in
           Ok ((if obligations = "" then lean_code else lean_code ^ "\n\n" ^ obligations),
               diagnostics)
         else
-          let* lean_code = Pipeline.transpile ~fresh_rollback:options.fresh_rollback spec_il in
+          let* lean_code = Pipeline.transpile ~mode spec_il in
           Ok ((if obligations = "" then lean_code else lean_code ^ "\n\n" ^ obligations),
               [])
         | _ -> assert false)

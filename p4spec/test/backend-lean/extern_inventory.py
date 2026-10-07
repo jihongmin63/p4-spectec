@@ -43,7 +43,8 @@ def main() -> None:
 
     for root in (args.spec, args.meta):
         translated = subprocess.run(
-            [args.exe, "--keep-going", str(root)], capture_output=True, text=True,
+            [args.exe, "--fresh-exact-counter", "--keep-going", str(root)],
+            capture_output=True, text=True,
             check=False,
         )
         assert "external type declaration" not in translated.stderr

@@ -58,7 +58,8 @@ def main():
             output = run(["lean", "-j", "2", str(target)], cwd=root)
             check_axioms(output)
             print(name + ": proved swap, identity, and preserved data")
-        exact = run([exe, str(fixtures / "fresh-alpha.watsup")])
+        exact = run([exe, "--fresh-exact-counter",
+                     str(fixtures / "fresh-alpha.watsup")])
         if "FreshAlphaIR" in exact:
             raise AssertionError("default exact output unexpectedly contains alpha support")
         unrelated = root / "unrelated.watsup"
