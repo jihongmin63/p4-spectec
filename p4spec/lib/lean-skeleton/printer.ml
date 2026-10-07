@@ -252,9 +252,9 @@ let rec print_term (bound : string list) (term : L.term) : string =
       if List.mem name bound then "_root_.Bool." ^ name else name
   | Number (value, typ) -> "(" ^ value ^ " : " ^ print_type bound typ ^ ")"
   | Text value -> "\"" ^ escape_string value ^ "\""
-  | FunctionReference (Global name) ->
+  | FunctionReference { target = Global name; _ } ->
       "(_root_.SpecTecRelationRef.named \"" ^ escape_string name ^ "\")"
-  | FunctionReference (Local name) -> print_identifier name
+  | FunctionReference { target = Local name; _ } -> print_identifier name
   | Apply application -> print_application bound application
   | Coerce (name, _, _, value) ->
       "(" ^ print_global_name bound name ^ " " ^ print value ^ ")"
@@ -1624,7 +1624,7 @@ let print_wfs_program (relations : L.declaration list) : string =
   in
   let rec referenced_name (target : string) (term : L.term) : bool =
     match term with
-    | FunctionReference (Global name) when name = target -> true
+    | FunctionReference { target = Global name; _ } when name = target -> true
     | _ -> List.exists (referenced_name target) (Traversal.term_children term)
   in
   let referenced_as_value (name : string) : bool =

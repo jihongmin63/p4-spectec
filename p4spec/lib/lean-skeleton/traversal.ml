@@ -29,7 +29,9 @@ let rec map_term_types (map : L.type_ref -> L.type_ref) (term : L.term) : L.term
   | Index (base, index) -> L.Index (recurse base, recurse index)
   | Decide (types, prop) ->
       L.Decide (List.map map types, map_prop_types map prop)
-  | Boolean _ | Text _ | FunctionReference _ -> term
+  | FunctionReference reference ->
+      L.FunctionReference { reference with signature = map reference.signature }
+  | Boolean _ | Text _ -> term
 
 and map_prop_types (map : L.type_ref -> L.type_ref) (prop : L.prop) : L.prop =
   match prop with

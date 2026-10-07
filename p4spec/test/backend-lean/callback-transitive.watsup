@@ -1,0 +1,33 @@
+syntax value = ZERO | WRAP value
+
+var v : value
+
+dec $identity(value) : value
+def $identity(v) = v
+
+dec $unused(value) : value
+def $unused(v) = v
+
+dec $invoke(def $step(value) : value, value) : value
+def $invoke(def $step, v) = $step(v)
+
+dec $forward(def $step(value) : value, value) : value
+def $forward(def $step, v) = $invoke(def $step, v)
+
+dec $recursive(value) : value
+def $recursive(ZERO) = ZERO
+def $recursive(WRAP v) = $forward(def $recursive, v)
+
+relation A: |- value
+  hint(input %0)
+
+relation B: |- value
+  hint(input %0)
+
+rule A/from_not_B:
+  |- ZERO
+  -- B:/ |- ZERO
+
+rule B/from_not_A:
+  |- ZERO
+  -- A:/ |- ZERO

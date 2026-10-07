@@ -10,6 +10,7 @@
   wfs_backend
   identifier
   relation_optimizer
+  relation_graph
   translator
   order
   printer

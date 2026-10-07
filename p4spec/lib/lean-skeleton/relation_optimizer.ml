@@ -11,7 +11,7 @@ let reference_names = function
 (* Scope matters when hiding intermediate witnesses inside a shared prefix. *)
 let rec term_names = function
   | L.Variable (name, _) -> Names.singleton name
-  | L.FunctionReference reference -> reference_names reference
+  | L.FunctionReference reference -> reference_names reference.target
   | L.Lambda (name, _, body) -> Names.remove name (term_names body)
   | L.Decide (_, prop) -> prop_names prop
   | L.Apply application -> application_names application
@@ -141,7 +141,7 @@ let global_name = function
 
 let rec term_dependencies term =
   let direct = match term with
-    | L.FunctionReference reference -> global_name reference
+    | L.FunctionReference reference -> global_name reference.target
     | L.Apply application -> global_name application.target
     | _ -> Names.empty in
   Names.union direct (union_map term_dependencies (Traversal.term_children term))

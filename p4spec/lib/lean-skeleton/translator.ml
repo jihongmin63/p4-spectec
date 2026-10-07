@@ -80,7 +80,7 @@ type alias = { type_parameters : string list; body : S.typ }
 
 type structure_field = { atom : S.atom; name : string; typ : S.typ }
 
-type function_kind = RelationFunction | BuiltinFunction of string list
+type function_kind = RelationFunction of L.type_ref | BuiltinFunction of string list
   | BuiltinRelation of string list
 
 type env = {
@@ -181,18 +181,34 @@ let build_env (program : S.spec) : env =
             structures =
               StringMap.add id.it (structure_fields fields) env.structures;
           }
-      | FuncDecD (id, _, _, _, _, _, _) ->
-          { env with functions = StringMap.add id.it RelationFunction env.functions }
+      | FuncDecD (id, tparams, parameters, result, _, _, _) ->
+          let type_parameters =
+            List.map (fun (parameter : S.tparam) -> parameter.it) tparams in
+          let signature = L.RelationType
+            (List.map (translate_parameter_with_parameters type_parameters) parameters,
+             translate_type_with_parameters type_parameters result) in
+          { env with functions =
+              StringMap.add id.it (RelationFunction signature) env.functions }
       | BuiltinDecD (id, parameters, _, _, _) ->
           let names : string list =
             List.map (fun (parameter : S.tparam) -> parameter.it) parameters in
           { env with functions = StringMap.add id.it
               (if Builtin_relation.is_relation id.it then BuiltinRelation names
                else BuiltinFunction names) env.functions }
-      | ExternDecD (id, _, _, _, _) ->
-          { env with functions = StringMap.add id.it RelationFunction env.functions }
-      | TableDecD (id, _, _, _, _) ->
-          { env with functions = StringMap.add id.it RelationFunction env.functions }
+      | ExternDecD (id, tparams, parameters, result, _) ->
+          let type_parameters =
+            List.map (fun (parameter : S.tparam) -> parameter.it) tparams in
+          let signature = L.RelationType
+            (List.map (translate_parameter_with_parameters type_parameters) parameters,
+             translate_type_with_parameters type_parameters result) in
+          { env with functions =
+              StringMap.add id.it (RelationFunction signature) env.functions }
+      | TableDecD (id, parameters, result, _, _) ->
+          let signature = L.RelationType
+            (List.map (translate_parameter_with_parameters []) parameters,
+             translate_type result) in
+          { env with functions =
+              StringMap.add id.it (RelationFunction signature) env.functions }
       | _ -> env)
     {
       iteration_prefix = "";
@@ -561,7 +577,9 @@ let function_reference (env : env) (functions : (string * L.type_ref) list)
   | Some typ -> L.Variable ("$" ^ id.it, typ)
   | None -> (
       match StringMap.find_opt id.it env.functions with
-      | Some RelationFunction -> L.FunctionReference (L.Global ("$" ^ id.it))
+      | Some (RelationFunction signature) ->
+          L.FunctionReference
+            { target = L.Global ("$" ^ id.it); signature }
       | _ -> unsupported id.at ("function argument $" ^ id.it))
 
 let rec expression_type (env : env) (type_parameters : string list)
@@ -1013,7 +1031,7 @@ let rec translate_term (env : env) (type_parameters : string list)
       let direct : bool =
         if List.mem_assoc id.it functions then false
         else match StringMap.find_opt id.it env.functions with
-        | Some RelationFunction -> false
+        | Some (RelationFunction _) -> false
         | Some (BuiltinRelation parameters) -> (
             match Builtin_relation.signature id.it parameters with
             | Ok _ -> false
@@ -2680,7 +2698,8 @@ module Fresh_state = struct
       let names = effectful declarations in
       let rec stateful_reference term =
         match term with
-        | L.FunctionReference (L.Global name) when StringSet.mem name names ->
+        | L.FunctionReference { target = L.Global name; _ }
+          when StringSet.mem name names ->
             Some name
         | _ ->
             List.find_map stateful_reference (Traversal.term_children term)

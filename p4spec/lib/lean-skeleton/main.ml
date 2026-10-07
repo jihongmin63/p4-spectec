@@ -11,13 +11,15 @@ type options = {
   check_rejection : string option;
   batch_cases : string option;
   case_range : (int * int) option;
+  dump_relation_graph : bool;
 }
 
 let usage =
   "Usage: lean-skeleton [--keep-going] [--fresh-rollback] [--obligations-only] \
    [--case P4 EXPECTED | --reject-case P4 | --manifest TSV]... \
    [--case-range START COUNT] \
-   [--dump-output P4 | --check-rejection P4 | --batch-cases PATHS] \
+   [--dump-output P4 | --check-rejection P4 | --batch-cases PATHS | \
+    --dump-relation-graph] \
    [-I DIR]... <spec-path>..."
 
 let read_manifest path =
@@ -64,6 +66,8 @@ let parse_options arguments =
         cases = List.rev options.cases }
     | "--keep-going" :: rest -> loop { options with keep_going = true } rest
     | "--fresh-rollback" :: rest -> loop { options with fresh_rollback = true } rest
+    | "--dump-relation-graph" :: rest ->
+        loop { options with dump_relation_graph = true } rest
     | "--obligations-only" :: rest ->
         loop { options with obligations_only = true } rest
     | "--case" :: path :: expected :: rest ->
@@ -97,7 +101,8 @@ let parse_options arguments =
   in
   loop { paths_spec = []; includes_p4 = []; cases = [];
          keep_going = false; fresh_rollback = false; obligations_only = false; dump_output = None;
-         check_rejection = None; batch_cases = None; case_range = None } arguments
+         check_rejection = None; batch_cases = None; case_range = None;
+         dump_relation_graph = false } arguments
 
 let read_expected path =
   try
@@ -332,6 +337,14 @@ let () =
         [options.dump_output; options.check_rejection; options.batch_cases]) > 1) then (
     prerr_endline "oracle checks cannot be combined with cases or translation options";
     exit 2);
+  if options.dump_relation_graph &&
+     (options.cases <> [] || options.obligations_only || options.keep_going
+      || options.fresh_rollback || options.case_range <> None
+      || options.dump_output <> None || options.check_rejection <> None
+      || options.batch_cases <> None) then (
+    prerr_endline
+      "--dump-relation-graph cannot be combined with cases, oracle checks, or translation modes";
+    exit 2);
   let result, collected_report =
     Diagnostic.collect (fun () ->
         let* spec_il = Pass.elab options.paths_spec in
@@ -348,6 +361,9 @@ let () =
             let* result = check_rejection options.paths_spec
               options.includes_p4 path in
             Ok (result, [])
+        | None, None, None when options.dump_relation_graph ->
+            let* graph = Pipeline.relation_graph spec_il in
+            Ok (graph, [])
         | None, None, None ->
         let selected, start = match options.case_range with
           | None -> options.cases, 0

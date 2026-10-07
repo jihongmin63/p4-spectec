@@ -25,3 +25,9 @@ let transpile_all ?(fresh_rollback = false) (input : S.spec) : string * Diagnost
   match print ~fresh_rollback ordered with
   | Ok source -> source, diagnostics @ ordering_diagnostics
   | Error diagnostic -> "", diagnostics @ ordering_diagnostics @ [diagnostic]
+
+let relation_graph (input : S.spec) : (string, Diagnostic.t) result =
+  let* lean_ast = Translator.translate input in
+  let* ordered = Order.order lean_ast in
+  let* analysis = Relation_graph.analyze ordered in
+  Ok (Relation_graph.render analysis)

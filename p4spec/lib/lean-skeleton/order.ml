@@ -33,7 +33,9 @@ let rec term_references (term : L.term) : StringSet.t =
         type_references typ
     | Constructor (reference, _) ->
         StringSet.add reference.type_name (unions (List.map type_references reference.type_arguments))
-    | FunctionReference reference -> reference_names reference
+    | FunctionReference reference ->
+        StringSet.union (reference_names reference.target)
+          (type_references reference.signature)
     | Apply application ->
         StringSet.union (reference_names application.target)
           (unions (List.map type_references application.type_arguments))

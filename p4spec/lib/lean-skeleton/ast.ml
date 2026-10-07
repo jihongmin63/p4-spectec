@@ -34,13 +34,18 @@ module Lean = struct
 
   type reference = Global of string | Local of string
 
+  type function_reference = {
+    target : reference;
+    signature : type_ref;
+  }
+
   type term =
     | Variable of string * type_ref
     | Constructor of constructor_ref * term list
     | Boolean of bool
     | Number of string * type_ref
     | Text of string
-    | FunctionReference of reference
+    | FunctionReference of function_reference
     | Apply of application
     | Coerce of string * type_ref * type_ref * term
     | MembershipTest of string * type_ref * type_ref * (string * int) list * bool * term

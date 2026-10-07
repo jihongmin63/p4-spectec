@@ -23,6 +23,18 @@
  (action (run %{exe:fresh_trace.exe})))
 
 (rule
+ (alias relation-graph-test)
+ (deps check_relation_graph.py callback-transitive.watsup)
+ (action
+  (run python3 %{dep:check_relation_graph.py}
+   --exe %{exe:../../lib/lean-skeleton/main.exe}
+   --source %{dep:callback-transitive.watsup})))
+
+(alias
+ (name backend-lean)
+ (deps (alias relation-graph-test)))
+
+(rule
  (alias backend-lean)
  (deps check_fresh_case.py fresh-case.watsup fresh-case-proof.lean case-empty.p4)
  (action
