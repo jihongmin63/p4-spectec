@@ -105,6 +105,14 @@ theorem negative_undetermined_certificate {fuel : Nat}
 end SpecTec
 '''
 
+    ordered += """
+namespace SpecTec
+private abbrev «$ordered:regular:eval:rule:0:plan» :=
+  («$ordered:regular».evalRules[0]'(by decide))
+private abbrev «$ordered:regular:eval:rule:1:plan» :=
+  («$ordered:regular».evalRules[1]'(by decide))
+end SpecTec
+"""
     wrong_rule = r'''
 namespace SpecTec
 open SpecTecProof

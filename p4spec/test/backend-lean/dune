@@ -23,6 +23,19 @@
  (action (run %{exe:fresh_trace.exe})))
 
 (rule
+ (alias shared-plan-test)
+ (deps check_shared_plan.py shared-plan-proof.lean relation-local.watsup)
+ (action
+  (run python3 %{dep:check_shared_plan.py}
+   --exe %{exe:../../lib/lean-skeleton/main.exe}
+   --source %{dep:relation-local.watsup}
+   --proof %{dep:shared-plan-proof.lean})))
+
+(alias
+ (name backend-lean)
+ (deps (alias shared-plan-test)))
+
+(rule
  (alias relation-graph-test)
  (deps check_relation_graph.py callback-transitive.watsup)
  (action
@@ -122,7 +135,8 @@
 
 (rule
  (alias backend-lean)
- (deps check_fresh_rollback.py fresh-rollback.watsup fresh-rollback-proof.lean)
+ (deps check_fresh_rollback.py fresh-rollback.watsup fresh-rollback-proof.lean
+  multi-output-plan.watsup)
  (action
   (run python3 %{dep:check_fresh_rollback.py}
    --exe %{exe:../../lib/lean-skeleton/main.exe})))

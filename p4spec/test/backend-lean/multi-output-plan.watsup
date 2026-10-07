@@ -1,0 +1,10 @@
+syntax typeId = text
+builtin dec $fresh_typeId() : typeId
+
+var n : nat
+
+dec $fresh_typeIds(nat) : typeId*
+def $fresh_typeIds(0) = eps
+def $fresh_typeIds(n) = $fresh_typeId() :: $fresh_typeIds(n')
+  -- if n =/= 0
+  -- if n' = $(n - 1)

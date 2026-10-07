@@ -6,7 +6,9 @@ open Lean Elab Command Meta
 
 /- Relation-local proof tools.  These tactics do not discover or traverse a
 global membership tree: the program is inferred from the supplied judgement
-or certificate, so `cases member` exposes only the owning SCC. -/
+or certificate. Default-mode membership is unpacked with `rcases`, then
+`spec_cases_allowed` traverses only its owning SCC and
+`spec_unpack_witness` exposes the selected plan's dependent telescope. -/
 
 syntax (name := specInvert)
   "spec_invert " term " with " ident ident ident ident ident ident : tactic
@@ -20,6 +22,57 @@ macro "spec_invert " proof:term " with " rule:ident member:ident head:ident
   `(tactic|
     obtain ⟨$rule, $member, $head, $side, $positive, $negative⟩ :=
       $casesName $proof)
+
+/- Expose the allowed rule alternatives, traversing only membership wrappers. -/
+section
+open Elab.Tactic
+
+private partial def splitPlanAllowed (goal : MVarId) (member : FVarId) : MetaM (List MVarId) := goal.withContext do
+  let type ← whnf (← member.getType)
+  let info ← getConstInfoInduct type.getAppFn.constName!
+  let wrappers := info.ctors.all fun name => name.getString!.startsWith "group:"
+  let branches ← goal.cases member
+  if !wrappers then return branches.toList.map (·.mvarId)
+  branches.toList.flatMapM fun branch =>
+    splitPlanAllowed branch.mvarId branch.fields.back!.fvarId!
+
+elab "spec_cases_allowed " member:ident : tactic => withMainContext do
+  let member ← getFVarId member
+  liftMetaTactic fun goal => splitPlanAllowed goal member
+
+private partial def unpackPlanWitness (goal : MVarId) (value : FVarId) : MetaM MVarId := goal.withContext do
+  let type ← whnf (← value.getType)
+  if type.isAppOf ``Sigma || type.isAppOf ``Prod then
+    let branches ← goal.cases value
+    unless branches.size == 1 do throwError "expected one tuple constructor"
+    let some branch := branches[0]? | throwError "missing tuple branch"
+    let mut result := branch.mvarId
+    -- A dependent tail is rewritten when its first field is split. Work from
+    -- the tail backwards so every remaining identifier precedes the change.
+    for field in branch.fields.reverse do
+      result ← unpackPlanWitness result field.fvarId!
+    return result
+  else if type.isAppOf ``Unit || type.isAppOf ``PUnit then
+    let branches ← goal.cases value
+    let some branch := branches[0]? | throwError "missing unit branch"
+    return branch.mvarId
+  else return goal
+
+elab "spec_unpack_witness " value:ident : tactic => withMainContext do
+  let value ← getFVarId value
+  liftMetaTactic fun goal => return [← unpackPlanWitness goal value]
+
+/-- Reduce the computed head before source casts and constructor equations. -/
+elab "spec_reduce_head " evidence:ident : tactic => withMainContext do
+  let evidence ← getFVarId evidence
+  let type ← whnf (← evidence.getType)
+  unless type.isAppOfArity ``Eq 3 do throwError "expected a head equality"
+  let arguments := type.getAppArgs
+  let head ← withTransparency .all <| whnf arguments[1]!
+  let normalized := mkApp3 type.getAppFn arguments[0]! head arguments[2]!
+  liftMetaTactic fun goal => return [← goal.changeLocalDecl evidence normalized]
+
+end
 
 syntax (name := specInduction)
   "spec_induction " term " with " ident ident ident ident ident : tactic
