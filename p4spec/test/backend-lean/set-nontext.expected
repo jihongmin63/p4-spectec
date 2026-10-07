@@ -1,0 +1,7 @@
+error: Lean skeleton does not support builtin call $union_set with K = nat because Lean translates this builtin only for text keys
+  --> ./set-nontext.watsup:9:24
+  |
+9 | def $bad_union(A, B) = $union_set<nat>(A, B)
+  |                        ^^^^^^^^^^^^^^^^^^^^^
+  |
+  | source: lean

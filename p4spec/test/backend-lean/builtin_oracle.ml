@@ -28,6 +28,11 @@ let render_texts (value : value) : string =
   |> List.map (Printf.sprintf "%S") |> String.concat ";"
   |> Printf.sprintf "[%s]"
 
+let render_text_set (value : value) : string =
+  match value |> Value.Get.case |> Domain.Mixfix.args with
+  | [ elements ] -> render_texts elements
+  | _ -> assert false
+
 let render_bits (value : value) : string =
   value |> Value.Get.list |> List.map Value.Get.bool
   |> List.map (fun bit -> if bit then "1" else "0") |> String.concat ""
@@ -44,6 +49,16 @@ let case (mixop : string) (arguments : value list) (typ : string) : value =
 let set (values : value list) : value =
   let elements : value = Value.Make.list Typ.Make.int values in
   case "`{ k `}" [ elements ] "set"
+
+let text_set (values : string list) : value =
+  let elements : value =
+    values |> List.map Value.Make.text |> Value.Make.list Typ.Make.text
+  in
+  case "`{ k `}" [ elements ] "set"
+
+let text_sets (values : value list) : value =
+  let set_type : typ = Typ.Make.var ("set" $ no_region) [ Typ.Make.text ] in
+  Value.Make.list set_type values
 
 let text_to_int (text : string) : unit -> value =
   fun () -> invoke "text_to_int" [] [ Value.Make.text text ]
@@ -69,6 +84,31 @@ let () =
         [ set [ number 1; number 1; number 2 ]; set [ number 2; number 1 ] ]);
   show "eq_set_false" render_bool (fun () ->
       invoke "eq_set" [ Typ.Make.int ] [ set [ number 1 ]; set [ number 2 ] ]);
+
+  let text_left : value = text_set [ "b"; "a"; "a"; "Z"; "é"; "" ] in
+  let text_right : value =
+    text_set [ "z"; "ab"; "b"; "FRESH__2"; "FRESH__10"; "a" ]
+  in
+  show "union_set_text_unsorted_duplicates" render_text_set (fun () ->
+      invoke "union_set" [ Typ.Make.text ] [ text_left; text_right ]);
+  show "union_set_text_empty" render_text_set (fun () ->
+      invoke "union_set" [ Typ.Make.text ] [ text_left; text_set [] ]);
+  show "unions_set_text_empty" render_text_set (fun () ->
+      invoke "unions_set" [ Typ.Make.text ] [ text_sets [] ]);
+  show "unions_set_text_three" render_text_set (fun () ->
+      invoke "unions_set" [ Typ.Make.text ]
+        [ text_sets
+            [ text_set [ "b"; "FRESH__2"; "" ];
+              text_set [ "a"; "Z"; "FRESH__10" ];
+              text_set [ "é"; "z"; "ab"; "b" ] ] ]);
+  show "diff_set_text" render_text_set (fun () ->
+      invoke "diff_set" [ Typ.Make.text ]
+        [ text_left; text_set [ "b"; "Z"; "x"; "b" ] ]);
+  show "intersect_set_text" render_text_set (fun () ->
+      invoke "intersect_set" [ Typ.Make.text ]
+        [ text_left; text_set [ "b"; "Z"; "x"; "b" ] ]);
+  show "intersect_set_text_empty" render_text_set (fun () ->
+      invoke "intersect_set" [ Typ.Make.text ] [ text_left; text_set [] ]);
 
   show "int_to_text_int_positive" render_text (fun () ->
       invoke "int_to_text" [] [ number 7 ]);

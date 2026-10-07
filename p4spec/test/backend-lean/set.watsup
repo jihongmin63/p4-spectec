@@ -1,0 +1,28 @@
+syntax nameIR = text
+syntax id = nameIR
+syntax typeId = nameIR
+
+syntax set<K> = `{ K* `}
+
+builtin dec $intersect_set<K>(set<K>, set<K>) : set<K>
+builtin dec $union_set<K>(set<K>, set<K>) : set<K>
+builtin dec $unions_set<K>(set<K>*) : set<K>
+builtin dec $diff_set<K>(set<K>, set<K>) : set<K>
+
+var A : set<id>
+var B : set<id>
+var C : set<typeId>
+var D : set<typeId>
+var Ss : set<typeId>*
+
+dec $union_alias(set<id>, set<id>) : set<id>
+def $union_alias(A, B) = $union_set<id>(A, B)
+
+dec $unions_alias(set<typeId>*) : set<typeId>
+def $unions_alias(Ss) = $unions_set<typeId>(Ss)
+
+dec $diff_alias(set<id>, set<id>) : set<id>
+def $diff_alias(A, B) = $diff_set<id>(A, B)
+
+dec $intersect_alias(set<typeId>, set<typeId>) : set<typeId>
+def $intersect_alias(C, D) = $intersect_set<typeId>(C, D)

@@ -21,6 +21,36 @@
   (diff builtin_oracle.expected builtin_oracle.actual)))
 
 (rule
+ (target set.lean)
+ (deps set.watsup set-proof.lean)
+ (action
+  (with-stdout-to set.lean
+   (progn
+    (run %{exe:../../lib/lean-skeleton/main.exe} %{dep:set.watsup})
+    (cat %{dep:set-proof.lean})))))
+
+(rule
+ (alias backend-lean)
+ (deps set.lean)
+ (action (run lean set.lean)))
+
+(rule
+ (target set-nontext.actual)
+ (deps set-nontext.watsup)
+ (action
+  (with-stderr-to set-nontext.actual
+   (with-accepted-exit-codes 1
+    (run
+     %{exe:../../lib/lean-skeleton/main.exe}
+     %{dep:set-nontext.watsup})))))
+
+(rule
+ (alias backend-lean)
+ (deps set-nontext.actual)
+ (action
+  (diff set-nontext.expected set-nontext.actual)))
+
+(rule
  (target tuple.lean)
  (deps tuple.watsup tuple-proof.lean)
  (action
@@ -47,6 +77,20 @@
  (alias backend-lean)
  (deps notation.lean)
  (action (run lean notation.lean)))
+
+(rule
+ (target table.lean)
+ (deps table.watsup table-proof.lean)
+ (action
+  (with-stdout-to table.lean
+   (progn
+    (run %{exe:../../lib/lean-skeleton/main.exe} %{dep:table.watsup})
+    (cat %{dep:table-proof.lean})))))
+
+(rule
+ (alias backend-lean)
+ (deps table.lean)
+ (action (run lean table.lean)))
 
 (rule
  (target update.lean)

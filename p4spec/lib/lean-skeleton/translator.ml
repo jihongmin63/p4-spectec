@@ -192,7 +192,7 @@ let build_env (program : S.spec) : env =
       | ExternDecD (id, _, _, _, _) ->
           { env with functions = StringMap.add id.it (UnsupportedFunction "external function") env.functions }
       | TableDecD (id, _, _, _, _) ->
-          { env with functions = StringMap.add id.it (UnsupportedFunction "table") env.functions }
+          { env with functions = StringMap.add id.it RelationFunction env.functions }
       | _ -> env)
     {
       iteration_prefix = "";
@@ -1019,7 +1019,25 @@ let rec translate_term (env : env) (type_parameters : string list)
             | Error reason -> unsupported exp.at ("builtin call " ^ reason))
         | Some (BuiltinFunction parameters) -> (
             match Builtin.translate id.it parameters with
-            | Ok _ -> true
+            | Ok _ ->
+                if Builtin.is_text_set_operation id.it then (
+                  match type_arguments with
+                  | [ key ] ->
+                      let expanded_key : L.type_ref =
+                        translate_type_with_parameters type_parameters key
+                        |> expand_expression_type env exp.at
+                      in
+                      if expanded_key <> L.BuiltinType ("String", []) then
+                        unsupported exp.at
+                          ("builtin call $" ^ id.it ^ " with K = "
+                         ^ S.Print.string_of_typ key
+                         ^ " because Lean translates this builtin only for \
+                            text keys")
+                  | _ ->
+                      unsupported exp.at
+                        ("builtin call $" ^ id.it
+                       ^ " because its number of type arguments is unexpected"));
+                true
             | Error reason -> unsupported exp.at ("builtin call " ^ reason))
         | Some (UnsupportedFunction kind) -> unsupported exp.at (kind ^ " call $" ^ id.it)
         | None -> unsupported exp.at ("unknown function call $" ^ id.it)
@@ -1031,7 +1049,13 @@ let rec translate_term (env : env) (type_parameters : string list)
       in
       let result : terms_result = collect_terms translate_argument next arguments in
       let application : L.application =
-        { target; type_arguments = List.map (translate_type_with_parameters type_parameters) type_arguments;
+        { target;
+          type_arguments =
+            (if Builtin.is_text_set_operation id.it && direct then []
+             else
+               List.map
+                 (translate_type_with_parameters type_parameters)
+                 type_arguments);
           instance_arguments = [];
           print_instance_arguments = [];
           arguments = result.terms }
@@ -1629,6 +1653,288 @@ let translate_relation (env : env) (name : string) (type_parameters : string lis
   rename_relation_declarations env type_parameters
     (translate_relation_unrenamed env name type_parameters argument_types branches notation)
 
+type table_parameter = {
+  lean_type : L.type_ref;
+  type_name : string;
+  variant : variant;
+}
+
+type selector_pattern_info =
+  | AnySelectorPattern
+  | ConstructorSelectorPattern of Mixfix.mixop * L.constructor_ref * int
+
+let table_parameter (env : env) (parameter : S.param) : table_parameter =
+  match parameter.it with
+  | ExpP ({ it = VarT (id, []); _ } as typ) -> (
+      match StringMap.find_opt id.it env.constructors with
+      | Some variant ->
+          { lean_type = translate_type typ; type_name = id.it; variant }
+      | None ->
+          unsupported typ.at
+            ("table parameter type without a variant definition " ^ id.it))
+  | ExpP typ ->
+      unsupported typ.at
+        ("table parameter type other than a variant without type arguments "
+        ^ S.Print.string_of_typ typ)
+  | DefP (id, _, _, _) ->
+      unsupported parameter.at ("function parameter of table " ^ id.it)
+
+let rec table_nested_pattern_irrefutable (env : env) (pattern : S.exp) : bool =
+  match pattern.it with
+  | VarE _ -> true
+  | IterE (element, _) -> table_nested_pattern_irrefutable env element
+  | CaseE notation -> (
+      match pattern.note with
+      | VarT (id, _) -> (
+          match StringMap.find_opt id.it env.constructors with
+          | Some { cases = [ (mixop, _, _) ]; _ }
+            when Mixfix.eq_mixop mixop (Mixfix.to_mixop notation) ->
+              List.for_all
+                (table_nested_pattern_irrefutable env)
+                (Mixfix.args notation)
+          | _ -> false)
+      | _ -> false)
+  | _ -> false
+
+let table_constructor_pattern (env : env) (parameter : table_parameter)
+    (at : region) (notation : S.notexp) : selector_pattern_info =
+  List.iter
+    (fun pattern ->
+      if not (table_nested_pattern_irrefutable env pattern) then
+        unsupported pattern.at
+          ("refutable nested table pattern " ^ S.Print.string_of_exp pattern))
+    (Mixfix.args notation);
+  let mixop : Mixfix.mixop = Mixfix.to_mixop notation in
+  let arity : int =
+    match
+      List.find_opt
+        (fun (candidate, _, _) -> Mixfix.eq_mixop candidate mixop)
+        parameter.variant.cases
+    with
+    | Some (_, _, arguments) -> List.length arguments
+    | None ->
+        unsupported at
+          ("table constructor lookup in " ^ parameter.type_name ^ ": "
+          ^ String.concat " " (mixop_parts notation))
+  in
+  ConstructorSelectorPattern
+    ( mixop,
+      constructor_reference env at parameter.type_name [] notation,
+      arity )
+
+let table_pattern_alternatives (env : env) (parameter : table_parameter)
+    (pattern : S.exp) : selector_pattern_info list =
+  match pattern.it with
+  | VarE _ -> [ AnySelectorPattern ]
+  | CaseE notation ->
+      [ table_constructor_pattern env parameter pattern.at notation ]
+  | UpCastE (_, ({ it = CaseE notation; _ } as constructor)) ->
+      [ table_constructor_pattern env parameter constructor.at notation ]
+  | UpCastE (_, { it = VarE _; note = VarT (id, []); at }) -> (
+      match StringMap.find_opt id.it env.constructors with
+      | None ->
+          unsupported at
+            ("table subtype pattern without a variant definition " ^ id.it)
+      | Some subtype ->
+          List.map
+            (fun (mixop, _, _) ->
+              let notation : unit Mixfix.t = mixop in
+              let arity : int =
+                match
+                  List.find_opt
+                    (fun (candidate, _, _) -> Mixfix.eq_mixop candidate mixop)
+                    parameter.variant.cases
+                with
+                | Some (_, _, arguments) -> List.length arguments
+                | None ->
+                    unsupported pattern.at
+                      ("table subtype constructor lookup in "
+                      ^ parameter.type_name ^ ": "
+                      ^ String.concat " " (mixop_parts mixop))
+              in
+              ConstructorSelectorPattern
+                ( mixop,
+                  constructor_reference env pattern.at parameter.type_name []
+                    notation,
+                  arity ))
+            subtype.cases)
+  | UpCastE (_, { it = VarE _; _ }) ->
+      unsupported pattern.at "table subtype pattern with a non-variant type"
+  | _ ->
+      unsupported pattern.at
+        ("table row pattern " ^ S.Print.string_of_exp pattern)
+
+let rec combinations (alternatives : 'a list list) : 'a list list =
+  match alternatives with
+  | [] -> [ [] ]
+  | choices :: rest ->
+      List.concat_map
+        (fun choice -> List.map (fun tail -> choice :: tail) (combinations rest))
+        choices
+
+let selector_pattern_matches (pattern : selector_pattern_info)
+    (constructor : Mixfix.mixop) : bool =
+  match pattern with
+  | AnySelectorPattern -> true
+  | ConstructorSelectorPattern (expected, _, _) ->
+      Mixfix.eq_mixop expected constructor
+
+let selector_arm_matches (patterns : selector_pattern_info list)
+    (constructors : Mixfix.mixop list) : bool =
+  List.for_all2 selector_pattern_matches patterns constructors
+
+let selector_pattern (pattern : selector_pattern_info) : L.selector_pattern =
+  match pattern with
+  | AnySelectorPattern -> L.Wildcard
+  | ConstructorSelectorPattern (_, reference, arity) ->
+      L.ConstructorPattern (reference, arity)
+
+let table_selector (env : env) (name : string)
+    (parameters : table_parameter list) (rows : S.tablerow list) : L.selector =
+  let universe : Mixfix.mixop list list =
+    parameters
+    |> List.map (fun parameter ->
+           List.map (fun (mixop, _, _) -> mixop) parameter.variant.cases)
+    |> combinations
+  in
+  let (_, (arms, covered)) :
+      int
+      * ((L.selector_pattern list * int) list
+        * selector_pattern_info list list) =
+    List.fold_left
+      (fun (row_index, (arms, covered)) (row : S.tablerow) ->
+        let arguments, _ = row.it in
+        if List.length arguments <> List.length parameters then
+          unsupported row.at
+            (Printf.sprintf "table row argument count: expected %d, got %d"
+               (List.length parameters) (List.length arguments));
+        let alternatives : selector_pattern_info list list =
+          List.map2
+            (fun parameter (argument : S.arg) ->
+              match argument.it with
+              | ExpA pattern -> table_pattern_alternatives env parameter pattern
+              | DefA id ->
+                  unsupported argument.at
+                    ("function argument in table row " ^ id.it))
+            parameters arguments
+          |> combinations
+        in
+        let (row_arms, covered) :
+            (L.selector_pattern list * int) list
+            * selector_pattern_info list list =
+          List.fold_left
+            (fun (row_arms, covered) patterns ->
+              let reachable : bool =
+                List.exists
+                  (fun constructors ->
+                    selector_arm_matches patterns constructors
+                    && not
+                         (List.exists
+                            (fun previous ->
+                              selector_arm_matches previous constructors)
+                            covered))
+                  universe
+              in
+              if not reachable then row_arms, covered
+              else
+                ( row_arms
+                  @ [ (List.map selector_pattern patterns, row_index) ],
+                  covered @ [ patterns ] ))
+            ([], covered) alternatives
+        in
+        if row_arms = [] then
+          unsupported row.at
+            (Printf.sprintf "dead table row %d of %s" row_index name);
+        row_index + 1, (arms @ row_arms, covered))
+      (0, ([], [])) rows
+  in
+  let missing : bool =
+    List.exists
+      (fun constructors ->
+        not
+          (List.exists
+             (fun patterns -> selector_arm_matches patterns constructors)
+             covered))
+      universe
+  in
+  let arms : (L.selector_pattern list * int) list =
+    if missing then
+      arms
+      @ [ (List.map (fun _ -> L.Wildcard) parameters, List.length rows) ]
+    else arms
+  in
+  { L.name = name ^ ":row";
+    parameters = List.map (fun parameter -> parameter.lean_type) parameters;
+    arms }
+
+let normalize_table_argument (result : S.exp) (argument : S.arg) : S.arg =
+  match argument.it with
+  | ExpA ({ it = UpCastE (_, ({ it = VarE id; _ } as variable)); _ } as exp) ->
+      if Domain.Lib.IdSet.mem id (S.Free.free_exp result) then
+        unsupported result.at
+          ("table subtype variable used in result " ^ id.it);
+      { argument with it = ExpA { exp with it = variable.it } }
+  | _ -> argument
+
+let translate_table (env : env) (id : S.id) (params : S.param list)
+    (result_type : S.typ) (rows : S.tablerow list) : L.declaration list =
+  let parameters : table_parameter list = List.map (table_parameter env) params in
+  let relation_name : string = "$" ^ id.it in
+  let selector : L.selector = table_selector env relation_name parameters rows in
+  let selector_name : string = selector.name in
+  let branches : branch list =
+    List.mapi
+      (fun index (row : S.tablerow) ->
+        let arguments, result = row.it in
+        let arguments : S.arg list =
+          List.map (normalize_table_argument result) arguments
+        in
+        let clause : S.clause = (arguments, result, []) $ row.at in
+        { (branch_of_clause [] params index clause) with
+          name = "row_" ^ string_of_int index })
+      rows
+  in
+  let argument_types : L.type_ref list =
+    List.map (fun parameter -> parameter.lean_type) parameters
+    @ [ translate_type result_type ]
+  in
+  let relation : L.declaration list =
+    translate_relation env relation_name [] argument_types branches None
+    |> List.map (function
+         | L.Relation ({ name; rules; _ } as relation)
+           when String.equal name relation_name ->
+             let rules : L.rule list =
+               List.mapi
+                 (fun index (rule : L.rule) ->
+                   let selector_arguments : L.term list =
+                     List.filteri
+                       (fun position _ -> position < List.length params)
+                       rule.conclusion.arguments
+                   in
+                   let selected : L.term =
+                     L.Apply
+                       { target = L.Global selector_name;
+                         type_arguments = []; instance_arguments = [];
+                         print_instance_arguments = [];
+                         arguments = selector_arguments }
+                   in
+                   let premise : L.premise =
+                     L.Prop
+                       (L.Comparison
+                          ( L.Eq,
+                            selected,
+                            L.Number
+                              (string_of_int index,
+                               L.BuiltinType ("Nat", [])) ))
+                   in
+                   { rule with premises = premise :: rule.premises })
+                 rules
+             in
+             L.Relation { relation with rules }
+         | declaration -> declaration)
+  in
+  L.Selector selector :: relation
+
 let translate_otherwise_relation (env : env) (name : string)
     (type_parameters : string list) (argument_types : L.type_ref list)
     (branches : branch list) (otherwise : branch) (inputs : Lang.Hints.Input.t)
@@ -1830,17 +2136,21 @@ let translate_declaration (env : env) (decl : S.def) : L.declaration list =
           | Ok declarations -> declarations
           | Error reason -> unsupported decl.at ("builtin relation " ^ reason))
         else
-          (match Builtin.translate id.it type_parameters with
-          | Ok expected ->
-              if parameters <> expected.parameters || result <> expected.result then
+          (match Builtin.signature id.it type_parameters with
+          | Ok (expected_parameters, expected_result) ->
+              if parameters <> expected_parameters || result <> expected_result then
                 unsupported decl.at
                   ("builtin function " ^ id.it
                  ^ " because its signature differs from the SpecTec implementation");
-              [ L.Builtin { expected with name = "$" ^ expected.name } ]
+              (match Builtin.translate id.it type_parameters with
+              | Ok builtin ->
+                  [ L.Builtin { builtin with name = "$" ^ builtin.name } ]
+              | Error reason ->
+                  unsupported decl.at ("builtin function " ^ reason))
           (* A rule-less relation would claim that the builtin has no result. *)
           | Error reason -> unsupported decl.at ("builtin function " ^ reason))
-    | TableDecD (id, _, _, _, _) ->
-        unsupported decl.at ("table declaration " ^ id.it)
+    | TableDecD (id, params, result, rows, _) ->
+        translate_table env id params result rows
     | FuncDecD (id, _, _, _, _, Some otherwise, _)
       when List.mem ("$" ^ id.it) env.recursive_otherwise ->
         unsupported otherwise.at ("otherwise of recursive definition $" ^ id.it)
@@ -1879,7 +2189,7 @@ let translate_declaration (env : env) (decl : S.def) : L.declaration list =
             (List.map (fun (rule : L.rule) -> rule.name) rules)
       | L.TypeAlias _ -> ()
       | L.Structure _ -> ()
-      | L.Builtin _ | L.Coercion _ | L.Membership _ -> ())
+      | L.Builtin _ | L.Selector _ | L.Coercion _ | L.Membership _ -> ())
     declarations;
   declarations
 

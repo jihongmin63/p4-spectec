@@ -112,6 +112,16 @@ module Lean = struct
     body : string;
   }
 
+  type selector_pattern =
+    | Wildcard
+    | ConstructorPattern of constructor_ref * int
+
+  type selector = {
+    name : string;
+    parameters : type_ref list;
+    arms : (selector_pattern list * int) list;
+  }
+
   type datatype = {
     name : string;
     type_parameters : string list;
@@ -138,6 +148,7 @@ module Lean = struct
         notation : notation_part list option;
       }
     | Builtin of builtin
+    | Selector of selector
     | Coercion of {
         name : string;
         source : type_ref;

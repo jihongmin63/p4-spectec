@@ -105,6 +105,27 @@ def specTecPrintEscapeByte (byte : UInt8) : String :=
 def specTecPrintEscapeText (value : String) : String :=
   value.toUTF8.foldl (fun result byte => result ++ specTecPrintEscapeByte byte) ""
 
+def specTecTextSetInsert (value : String) : List String → List String
+  | [] => [value]
+  | head :: tail =>
+      if value < head then value :: head :: tail
+      else if head < value then head :: specTecTextSetInsert value tail
+      else head :: tail
+
+def specTecTextSetNormalize (values : List String) : List String :=
+  values.foldr specTecTextSetInsert []
+
+def specTecTextSetUnion (left right : List String) : List String :=
+  specTecTextSetNormalize (left ++ right)
+
+def specTecTextSetDiff (left right : List String) : List String :=
+  let normalizedRight := specTecTextSetNormalize right
+  (specTecTextSetNormalize left).filter (fun value => !normalizedRight.contains value)
+
+def specTecTextSetIntersect (left right : List String) : List String :=
+  let normalizedRight := specTecTextSetNormalize right
+  (specTecTextSetNormalize left).filter (fun value => normalizedRight.contains value)
+
 instance : SpecTecPrint Bool :=
   ⟨fun value => some (if value then "true" else "false")⟩
 
@@ -465,6 +486,45 @@ let print_type_parameters (parameters : string list) : string =
   | [] -> ""
   | _ -> " (" ^ String.concat " " (List.map print_identifier parameters) ^ " : Type)"
 
+let print_selector_pattern (pattern : L.selector_pattern) : string =
+  match pattern with
+  | Wildcard -> "_"
+  | ConstructorPattern (reference, arity) ->
+      print_constructor_ref [] reference
+      ^ String.concat "" (List.init arity (fun _ -> " _"))
+
+let print_selector (selector : L.selector) : string =
+  let result : string = print_type [] (L.BuiltinType ("Nat", [])) in
+  if selector.parameters = [] then
+    match selector.arms with
+    | [ ([], row) ] ->
+        Printf.sprintf "def %s : %s := %d"
+          (print_identifier selector.name) result row
+    | _ -> invalid_arg "parameterless selector must have exactly one empty arm"
+  else
+    let binders : string =
+      selector.parameters
+      |> List.mapi (fun index typ ->
+             Printf.sprintf " (arg%d : %s)" index (print_type [] typ))
+      |> String.concat ""
+    in
+    let arguments : string =
+      selector.parameters
+      |> List.mapi (fun index _ -> "arg" ^ string_of_int index)
+      |> String.concat ", "
+    in
+    let arms : string list =
+      List.map
+        (fun (patterns, row) ->
+          "  | " ^ String.concat ", " (List.map print_selector_pattern patterns)
+          ^ " => " ^ string_of_int row)
+        selector.arms
+    in
+    String.concat "\n"
+      (Printf.sprintf "def %s%s : %s :="
+         (print_identifier selector.name) binders result
+       :: ("  match " ^ arguments ^ " with") :: arms)
+
 let print_declaration ?(derive_decidable_eq = false)
     (declaration : L.declaration) : string =
   let deriving (printed : string) : string =
@@ -523,6 +583,7 @@ let print_declaration ?(derive_decidable_eq = false)
       in
       declaration
   | Builtin builtin -> print_builtin builtin
+  | Selector selector -> print_selector selector
   | Coercion { name; source; target; type_parameters; cases } ->
       let parameters : string = String.concat ""
         (List.map (fun parameter ->
