@@ -1,0 +1,2 @@
+accept	case-empty.p4	case-oracle.lean
+reject	case-semicolon.p4

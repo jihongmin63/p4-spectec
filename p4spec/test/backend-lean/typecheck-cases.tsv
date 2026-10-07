@@ -1,0 +1,41 @@
+# status<TAB>path, relative to this manifest
+# Accepted cases have fixed Program_ok output terms; rejected cases fail Program_ok.
+accept	../micro/programs/casts.p4	oracles/micro-casts.lean
+accept	../micro/programs/ctrl.p4	oracles/micro-ctrl.lean
+accept	../micro/programs/decls.p4	oracles/micro-decls.lean
+accept	../micro/programs/expr.p4	oracles/micro-expr.lean
+accept	../micro/programs/funcs.p4	oracles/micro-funcs.lean
+accept	../micro/programs/headers.p4	oracles/micro-headers.lean
+accept	../micro/programs/logic.p4	oracles/micro-logic.lean
+accept	../micro/programs/parser.p4	oracles/micro-parser.lean
+accept	../micro/programs/tables.p4	oracles/micro-tables.lean
+accept	../micro/programs/types.p4	oracles/micro-types.lean
+accept	../micro/programs/types_adv.p4	oracles/micro-types_adv.lean
+# Positive regression cases passed the Program_inst SL suite.
+accept	../../../testdata/regression/pos/issue-212.p4	oracles/regression-issue-212.lean
+accept	../../../testdata/regression/pos/issue-232.p4	oracles/regression-issue-232.lean
+accept	../../../testdata/regression/pos/issue-251.p4	oracles/regression-issue-251.lean
+accept	../../../testdata/regression/pos/placeholder.p4	oracles/regression-placeholder.lean
+# Representative cases from the p4c sample suite (1267 accepted in SL).
+accept	../../../p4c/testdata/p4_16_samples/empty.p4	oracles/p4c-empty.lean
+accept	../../../p4c/testdata/p4_16_samples/action-bind.p4	oracles/p4c-action-bind.lean
+accept	../../../p4c/testdata/p4_16_samples/basic_routing-bmv2.p4	oracles/p4c-basic_routing-bmv2.lean
+reject	../micro/programs-neg/type_mismatch.p4
+# Negative regression cases failed the Program_ok SL suite.
+reject	../../../testdata/regression/neg/issue-204.p4
+reject	../../../testdata/regression/neg/issue-207.p4
+reject	../../../testdata/regression/neg/issue-213.p4
+reject	../../../testdata/regression/neg/issue-222.p4
+reject	../../../testdata/regression/neg/issue-225.p4
+reject	../../../testdata/regression/neg/issue-227.p4
+reject	../../../testdata/regression/neg/issue-229.p4
+reject	../../../testdata/regression/neg/issue-230.p4
+reject	../../../testdata/regression/neg/issue-233.p4
+reject	../../../testdata/regression/neg/issue-236.p4
+reject	../../../testdata/regression/neg/issue-243.p4
+reject	../../../testdata/regression/neg/issue-245.p4
+reject	../../../testdata/regression/neg/issue-304.p4
+reject	../../../testdata/regression/neg/placeholder.p4
+# Representative cases from the p4c error suite (535 rejected in SL).
+reject	../../../p4c/testdata/p4_16_errors/assign.p4
+reject	../../../p4c/testdata/p4_16_errors/binary_e.p4

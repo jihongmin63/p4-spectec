@@ -193,3 +193,110 @@
  (alias backend-lean)
  (deps relation-wfs.lean)
  (action (run lean relation-wfs.lean)))
+
+(rule
+ (target case-obligations.actual)
+ (deps case-obligation.watsup case-empty.p4 case-semicolon.p4 case-oracle.lean)
+ (action
+  (with-stdout-to case-obligations.actual
+   (run %{exe:../../lib/lean-skeleton/main.exe}
+    --obligations-only
+    --case %{dep:case-empty.p4} %{dep:case-oracle.lean}
+    --reject-case %{dep:case-semicolon.p4}
+    %{dep:case-obligation.watsup}))))
+
+(rule
+ (alias backend-lean)
+ (deps case-obligations.actual)
+ (action (diff case-obligations.expected case-obligations.actual)))
+
+(rule
+ (target case-obligation.lean)
+ (deps case-obligation.watsup case-empty.p4 case-semicolon.p4 case-oracle.lean)
+ (action
+  (with-stdout-to case-obligation.lean
+   (run %{exe:../../lib/lean-skeleton/main.exe}
+    --case %{dep:case-empty.p4} %{dep:case-oracle.lean}
+    --reject-case %{dep:case-semicolon.p4}
+    %{dep:case-obligation.watsup}))))
+
+(rule
+ (alias backend-lean)
+ (deps case-obligation.lean)
+ (action (run lean case-obligation.lean)))
+
+(rule
+ (target case-manifest.actual)
+ (deps case-obligation.watsup case-empty.p4 case-semicolon.p4 case-oracle.lean case-manifest.tsv)
+ (action
+  (with-stdout-to case-manifest.actual
+   (run %{exe:../../lib/lean-skeleton/main.exe}
+    --obligations-only --manifest %{dep:case-manifest.tsv}
+    %{dep:case-obligation.watsup}))))
+
+(rule
+ (alias backend-lean)
+ (deps case-manifest.actual)
+ (action (diff case-obligations.expected case-manifest.actual)))
+
+(rule
+ (target case-oracle.actual)
+ (deps case-obligation.watsup case-empty.p4)
+ (action
+  (with-stdout-to case-oracle.actual
+   (run %{exe:../../lib/lean-skeleton/main.exe}
+    --dump-output %{dep:case-empty.p4} %{dep:case-obligation.watsup}))))
+
+(rule
+ (alias backend-lean)
+ (deps case-oracle.actual)
+ (action (diff case-oracle.lean case-oracle.actual)))
+
+(rule
+ (target case-oracle-check.actual)
+ (deps case-manifest.tsv case-oracle.lean case-empty.p4 case-semicolon.p4
+  case-obligation.watsup verify_oracles.py)
+ (action
+  (with-stdout-to case-oracle-check.actual
+   (run python3 %{dep:verify_oracles.py}
+    --exe %{exe:../../lib/lean-skeleton/main.exe}
+    --manifest %{dep:case-manifest.tsv}
+    --spec %{dep:case-obligation.watsup}
+    --include ../../../p4c/p4include))))
+
+(rule
+ (alias backend-lean)
+ (deps case-oracle-check.actual)
+ (action (diff case-oracle-check.expected case-oracle-check.actual)))
+
+(rule
+ (target micro-types-oracle.actual)
+ (deps
+  (source_tree ../../../spec)
+  (source_tree ../../../p4c/p4include)
+  ../micro/programs/types.p4
+  oracles/micro-types.lean)
+ (action
+  (with-stdout-to micro-types-oracle.actual
+   (run %{exe:../../lib/lean-skeleton/main.exe}
+    --dump-output %{dep:../micro/programs/types.p4}
+    -I ../../../p4c/p4include ../../../spec))))
+
+(rule
+ (alias backend-lean)
+ (deps micro-types-oracle.actual)
+ (action (diff oracles/micro-types.lean micro-types-oracle.actual)))
+
+(rule
+ (target case-rejection.actual)
+ (deps case-obligation.watsup case-semicolon.p4)
+ (action
+  (with-stdout-to case-rejection.actual
+   (run %{exe:../../lib/lean-skeleton/main.exe}
+     --check-rejection %{dep:case-semicolon.p4}
+    %{dep:case-obligation.watsup}))))
+
+(rule
+ (alias backend-lean)
+ (deps case-rejection.actual)
+ (action (diff case-rejection.expected case-rejection.actual)))
