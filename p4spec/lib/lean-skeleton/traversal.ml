@@ -49,6 +49,8 @@ and map_application_types (map : L.type_ref -> L.type_ref)
     (application : L.application) : L.application =
   { application with type_arguments = List.map map application.type_arguments;
     instance_arguments = List.map map application.instance_arguments;
+    print_instance_arguments =
+      List.map map application.print_instance_arguments;
     arguments = List.map (map_term_types map) application.arguments }
 
 let map_premise_types (map : L.type_ref -> L.type_ref) (premise : L.premise) :

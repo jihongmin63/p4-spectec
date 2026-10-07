@@ -50,7 +50,7 @@ let rec translate_type_with_parameters (type_parameters : string list)
       L.BuiltinType
         ("List", [ translate_type_with_parameters type_parameters element ])
   | TupleT (_ :: _ :: _ as elements) ->
-      nest_pairs (fun left right -> L.Pair (left, right))
+      L.TupleType
         (List.map (translate_type_with_parameters type_parameters) elements)
   | _ -> unsupported typ.at ("type " ^ S.Print.string_of_typ typ)
 
@@ -216,10 +216,8 @@ let rec substitute_type_parameters (bindings : (string * L.type_ref) list)
       L.Applied (name, List.map (substitute_type_parameters bindings) arguments)
   | BuiltinType (name, arguments) ->
       L.BuiltinType (name, List.map (substitute_type_parameters bindings) arguments)
-  | Pair (left, right) ->
-      L.Pair
-        ( substitute_type_parameters bindings left,
-          substitute_type_parameters bindings right )
+  | TupleType elements ->
+      L.TupleType (List.map (substitute_type_parameters bindings) elements)
   | RelationType (arguments, result) ->
       L.RelationType
         ( List.map (substitute_type_parameters bindings) arguments,
@@ -253,10 +251,8 @@ let rec expand_type_aliases (lookup : string -> L.type_alias option)
   | BuiltinType (name, arguments) ->
       L.BuiltinType
         (name, List.map (expand_type_aliases lookup at visited) arguments)
-  | Pair (left, right) ->
-      L.Pair
-        ( expand_type_aliases lookup at visited left,
-          expand_type_aliases lookup at visited right )
+  | TupleType elements ->
+      L.TupleType (List.map (expand_type_aliases lookup at visited) elements)
   | RelationType (arguments, result) ->
       L.RelationType
         ( List.map (expand_type_aliases lookup at visited) arguments,
@@ -342,9 +338,103 @@ let builtin_constructor (env : env) (at : region) (type_name : string)
       | Some (mixop, _, _) ->
           constructor_reference env at type_name type_arguments mixop
 
+let print_atom (atom : S.atom) : string =
+  match atom.it with
+  | Domain.Atom.Tag _ -> ""
+  | value ->
+      value |> Domain.Atom.render_atom |> String.lowercase_ascii
+
+let default_print_format (notation : 'a Mixfix.t) : L.print_format =
+  let rec translate (cursor : int) (notation : 'a Mixfix.t) :
+      int * L.print_format =
+    match notation with
+    | Mixfix.Arg _ -> cursor + 1, L.PrintHole cursor
+    | Mixfix.Atom atom ->
+        let rendered : string = print_atom atom in
+        ( cursor,
+          if rendered = "" then L.PrintAbsent
+          else L.PrintLiteral rendered )
+    | Mixfix.Brack (left, inner, right) ->
+        let cursor, inner = translate cursor inner in
+        ( cursor,
+          L.PrintFilteredJoin
+            [ (let rendered = print_atom left in
+                if rendered = "" then L.PrintAbsent
+                else L.PrintLiteral rendered);
+              inner;
+              (let rendered = print_atom right in
+                if rendered = "" then L.PrintAbsent
+                else L.PrintLiteral rendered) ] )
+    | Mixfix.Infix (left, atom, right) ->
+        let cursor, left = translate cursor left in
+        let cursor, right = translate cursor right in
+        let rendered : string = print_atom atom in
+        ( cursor,
+          L.PrintFilteredJoin
+            [ left;
+              (if rendered = "" then L.PrintAbsent
+               else L.PrintLiteral rendered);
+              right ] )
+    | Mixfix.Seq parts ->
+        let cursor, parts =
+          List.fold_left
+            (fun (cursor, translated) part ->
+              let cursor, part = translate cursor part in
+              cursor, translated @ [ part ])
+            (cursor, []) parts
+        in
+        cursor, L.PrintFilteredJoin parts
+  in
+  snd (translate 0 notation)
+
+let hint_print_format (hint : Lang.Hints.Alter.t) : L.print_format =
+  let open Lang.Hints.Alter in
+  let rec translate (cursor : int) (hint : Lang.Hints.Alter.t) :
+      int * L.print_format =
+    match hint with
+    | TextH "" -> cursor, L.PrintAbsent
+    | TextH text -> cursor, L.PrintLiteral text
+    | AtomH atom -> cursor, L.PrintLiteral (print_atom atom)
+    | SeqH hints ->
+        let cursor, hints =
+          List.fold_left
+            (fun (cursor, translated) hint ->
+              let cursor, hint = translate cursor hint in
+              cursor, translated @ [ hint ])
+            (cursor, []) hints
+        in
+        cursor, L.PrintSequence hints
+    | BrackH (left, hint, right) ->
+        let cursor, hint = translate cursor hint in
+        ( cursor,
+          L.PrintFilteredJoin
+            [ L.PrintLiteral (print_atom left); hint;
+              L.PrintLiteral (print_atom right) ] )
+    | HoleH { it = `Next; _ } -> cursor + 1, L.PrintHole cursor
+    | HoleH { it = `Num index; _ } -> cursor, L.PrintHole index
+    | FuseH (left, right) ->
+        let cursor, left = translate cursor left in
+        let cursor, right = translate cursor right in
+        cursor, L.PrintFuse (left, right)
+    | OtherH expression ->
+        cursor, L.PrintLiteral (Lang.El.Print.string_of_exp expression)
+  in
+  snd (translate 0 hint)
+
+let constructor_print_format (notation : S.nottyp)
+    (hints : S.hint list) : L.print_format =
+  match
+    List.find_opt
+      (fun hint -> Lang.El.(hint.it.hintid.it = "print"))
+      hints
+  with
+  | Some hint ->
+      hint_print_format (Lang.Hints.Alter.init Lang.El.(hint.it.hintexp))
+  | None -> default_print_format notation.it
+
 let translate_constructor (env : env) (type_name : string)
     (type_parameters : string list) (ctor : S.typcase) : L.constructor =
-  let nottyp, _, _ = ctor in
+  let nottyp, typorigin, hints = ctor in
   let type_arguments : L.type_ref list =
     List.map (fun name -> L.TypeParameter name) type_parameters
   in
@@ -363,6 +453,8 @@ let translate_constructor (env : env) (type_name : string)
       (match type_arguments with
       | [] -> L.Name type_name
       | _ -> L.Applied (type_name, type_arguments));
+    print_origin = (let origin, _ = typorigin.it in origin.it);
+    print_format = constructor_print_format nottyp hints;
   }
 
 let rec translate_notation (notation : S.nottyp') : L.notation_part list =
@@ -597,6 +689,7 @@ let translate_iteration (env : env) (type_parameters : string list)
     { target = L.Global name;
       type_arguments = List.map (fun name -> L.TypeParameter name) type_parameters;
       instance_arguments = [];
+      print_instance_arguments = [];
       arguments = context_terms @ collections }
   in
   let empty : L.term list = List.map
@@ -627,6 +720,7 @@ let translate_iteration (env : env) (type_parameters : string list)
   ] in
   let helper : L.declaration = L.Relation
     { name; type_parameters; equality_parameters = [];
+      print_parameters = [];
       argument_types = List.map snd context @ List.map (fun (_, _, typ) -> collection_type typ) vectors;
       rules; notation = None }
   in
@@ -690,7 +784,8 @@ let rec type_code (typ : L.type_ref) : string =
       "A" ^ name ^ "(" ^ String.concat "," (List.map type_code arguments) ^ ")"
   | BuiltinType (name, arguments) ->
       "B" ^ name ^ "(" ^ String.concat "," (List.map type_code arguments) ^ ")"
-  | Pair (left, right) -> "T(" ^ type_code left ^ "," ^ type_code right ^ ")"
+  | TupleType elements ->
+      "T(" ^ String.concat "," (List.map type_code elements) ^ ")"
   | RelationType (arguments, result) ->
       "R(" ^ String.concat "," (List.map type_code (result :: arguments)) ^ ")"
 
@@ -707,6 +802,24 @@ let membership_name (source : L.type_ref) (target : L.type_ref) : string =
   | _ ->
       "sub:" ^ Digest.to_hex
         (Digest.string (type_code source ^ ":" ^ type_code target))
+
+let rec tuple_terms (types : L.type_ref list) (term : L.term) : L.term list =
+  match types with
+  | [] -> invalid_arg "cannot project an empty tuple"
+  | [ _ ] -> [ term ]
+  | _ :: rest ->
+      let (left, right) : L.term * L.term =
+        match term with
+        | L.Tuple (left, right) -> left, right
+        | _ -> L.Native ("Prod.fst", [ term ]), L.Native ("Prod.snd", [ term ])
+      in
+      left :: tuple_terms rest right
+
+let rec conjunction (terms : L.term list) : L.term =
+  match terms with
+  | [] -> L.Boolean true
+  | [ term ] -> term
+  | term :: rest -> L.Binary ("&&", term, conjunction rest)
 
 let rec check_term (env : env) (type_parameters : string list) (at : region)
     (source : L.type_ref) (target : L.type_ref) (subcheck : S.subcheck)
@@ -730,20 +843,17 @@ let rec check_term (env : env) (type_parameters : string list) (at : region)
       | _ -> unsupported at
           ("MixopSC requires variant source and target: "
            ^ type_code source ^ " <: " ^ type_code target))
-  | TupleSC (left_check :: (_ :: _ as right_checks)) ->
+  | TupleSC (_ :: _ :: _ as checks) ->
       (match source, target with
-      | Pair (source_left, source_right), Pair (target_left, target_right) ->
-          let (left, right) : L.term * L.term = match term with
-            | Tuple (left, right) -> left, right
-            | _ -> L.Native ("Prod.fst", [ term ]), L.Native ("Prod.snd", [ term ])
-          in
-          let right_check : S.subcheck = match right_checks with
-            | [check] -> check
-            | checks -> TupleSC checks
-          in
-          L.Binary ("&&",
-            check_term env type_parameters at source_left target_left left_check left,
-            check_term env type_parameters at source_right target_right right_check right)
+      | TupleType sources, TupleType targets
+        when List.length sources = List.length targets
+          && List.length sources = List.length checks ->
+          let terms : L.term list = tuple_terms sources term in
+          List.map2
+            (fun (source, target) (check, term) ->
+              check_term env type_parameters at source target check term)
+            (List.combine sources targets) (List.combine checks terms)
+          |> conjunction
       | _ -> unsupported at "TupleSC with non-pair source or target")
   | TupleSC _ -> unsupported at "TupleSC with unsupported tuple arity"
   | IterSC (List, item_check) ->
@@ -780,14 +890,12 @@ let rec cast_term (env : env) (at : region) (source : L.type_ref)
   else match source, target with
   | BuiltinType ("Nat", []), BuiltinType ("Int", []) ->
       L.Native ("Int.ofNat", [ term ])
-  | Pair (source_left, source_right), Pair (target_left, target_right) ->
-      let (left, right) : L.term * L.term = match term with
-        | Tuple (left, right) -> left, right
-        | _ -> L.Native ("Prod.fst", [ term ]), L.Native ("Prod.snd", [ term ])
-      in
-      L.Tuple
-        (cast_term env at source_left target_left left,
-         cast_term env at source_right target_right right)
+  | TupleType sources, TupleType targets
+    when List.length sources = List.length targets ->
+      List.map2
+        (fun (source, term) target -> cast_term env at source target term)
+        (List.combine sources (tuple_terms sources term)) targets
+      |> nest_pairs (fun left right -> L.Tuple (left, right))
   | BuiltinType ("List", [ source_element ]),
     BuiltinType ("List", [ target_element ]) ->
       (match term with
@@ -925,6 +1033,7 @@ let rec translate_term (env : env) (type_parameters : string list)
       let application : L.application =
         { target; type_arguments = List.map (translate_type_with_parameters type_parameters) type_arguments;
           instance_arguments = [];
+          print_instance_arguments = [];
           arguments = result.terms }
       in
       if direct then combine_term result (L.Apply application)
@@ -1243,6 +1352,7 @@ let translate_application (env : env) (type_parameters : string list)
     L.application * terms_result =
   let result : terms_result = collect_terms (translate_term env type_parameters functions) next arguments in
   { target = L.Global name; type_arguments; instance_arguments = [];
+    print_instance_arguments = [];
     arguments = result.terms }, result
 
 type condition_result = { condition : L.prop; evaluation : terms_result }
@@ -1336,6 +1446,7 @@ let translate_branch (env : env) (type_parameters : string list)
     { target = L.Global relation_name;
       type_arguments = List.map (fun name -> L.TypeParameter name) type_parameters;
       instance_arguments = [];
+      print_instance_arguments = [];
       arguments = result.terms }
   in
   let result : terms_result = List.fold_left
@@ -1482,8 +1593,8 @@ let translate_relation_unrenamed (env : env) (name : string) (type_parameters : 
   in
   let rules : L.rule list = List.rev rules in
   L.Relation
-    { name; type_parameters; equality_parameters = []; argument_types; rules;
-      notation }
+    { name; type_parameters; equality_parameters = []; print_parameters = [];
+      argument_types; rules; notation }
   :: helpers
 
 let rename_relation_declarations (env : env) (type_parameters : string list)
@@ -1536,6 +1647,7 @@ let translate_otherwise_relation (env : env) (name : string)
     { target = L.Global name;
       type_arguments = List.map (fun name -> L.TypeParameter name) type_parameters;
       instance_arguments = [];
+      print_instance_arguments = [];
       arguments = List.map (fun (name, typ) -> L.Variable (name, typ)) binders }
   in
   let wrapper : L.rule =
@@ -1777,8 +1889,7 @@ let rec type_parameters_in (typ : L.type_ref) : string list =
   | Name _ -> []
   | Applied (_, arguments) | BuiltinType (_, arguments) ->
       List.concat_map type_parameters_in arguments
-  | Pair (left, right) ->
-      type_parameters_in left @ type_parameters_in right
+  | TupleType elements -> List.concat_map type_parameters_in elements
   | RelationType (arguments, result) ->
       List.concat_map type_parameters_in (result :: arguments)
 
@@ -1809,29 +1920,41 @@ let required_type_parameters (parameters : string list)
   let mentioned : string list = List.concat_map type_parameters_in types in
   List.filter (fun parameter -> List.mem parameter mentioned) parameters
 
+type instance_signature = {
+  type_parameters : string list;
+  equality : string list;
+  printer : string list;
+}
+
 let equality_parameters (declarations : L.located_declaration list) :
     L.located_declaration list =
-  let signatures : (string list * string list) StringMap.t =
+  let signatures : instance_signature StringMap.t =
     List.fold_left
       (fun signatures (located : L.located_declaration) ->
         match located.declaration with
-        | L.Relation { name; type_parameters; equality_parameters; rules; _ } ->
+        | L.Relation
+            { name; type_parameters; equality_parameters; print_parameters;
+              rules; _ } ->
             let direct : string list =
               relation_terms rules
               |> List.concat_map equality_types_in_term
               |> required_type_parameters type_parameters
             in
             StringMap.add name
-              (type_parameters,
-               List.filter
-                 (fun parameter ->
-                   List.mem parameter equality_parameters
-                   || List.mem parameter direct)
-                 type_parameters)
+              { type_parameters;
+                equality =
+                  List.filter
+                    (fun parameter ->
+                      List.mem parameter equality_parameters
+                      || List.mem parameter direct)
+                    type_parameters;
+                printer = print_parameters }
               signatures
         | L.Builtin builtin ->
             StringMap.add builtin.name
-              (builtin.type_parameters, builtin.equality_parameters)
+              { type_parameters = builtin.type_parameters;
+                equality = builtin.equality_parameters;
+                printer = builtin.print_parameters }
               signatures
         | _ -> signatures)
       StringMap.empty declarations
@@ -1844,70 +1967,94 @@ let equality_parameters (declarations : L.located_declaration list) :
     | _ :: rest -> parameter_position name (index + 1) rest
   in
   let required_by_application (caller_parameters : string list)
-      (signatures : (string list * string list) StringMap.t)
+      (select : instance_signature -> string list)
+      (signatures : instance_signature StringMap.t)
       (application : L.application) : string list =
     match application.target with
     | L.Local _ -> []
     | L.Global name -> (
         match StringMap.find_opt name signatures with
         | None -> []
-        | Some (callee_parameters, callee_equalities) ->
+        | Some signature ->
             let types : L.type_ref list =
               List.filter_map
                 (fun parameter ->
-                  match parameter_position parameter 0 callee_parameters with
+                  match
+                    parameter_position parameter 0 signature.type_parameters
+                  with
                   | Some index -> List.nth_opt application.type_arguments index
                   | None -> None)
-                callee_equalities
+                (select signature)
             in
             required_type_parameters caller_parameters types)
   in
-  let rec close (signatures : (string list * string list) StringMap.t) :
-      (string list * string list) StringMap.t =
+  let rec close (signatures : instance_signature StringMap.t) :
+      instance_signature StringMap.t =
     let changed : bool ref = ref false in
-    let next : (string list * string list) StringMap.t =
+    let next : instance_signature StringMap.t =
       List.fold_left
         (fun next (located : L.located_declaration) ->
           match located.declaration with
           | L.Relation { name; type_parameters; rules; _ } ->
-              let (_, current) : string list * string list =
-                StringMap.find name signatures
-              in
-              let called : string list =
+              let current : instance_signature =
+                StringMap.find name signatures in
+              let called_equalities : string list =
                 relation_applications rules
                 |> List.concat_map
-                     (required_by_application type_parameters signatures)
+                     (required_by_application type_parameters
+                        (fun signature -> signature.equality) signatures)
               in
-              let required : string list =
+              let called_printers : string list =
+                relation_applications rules
+                |> List.concat_map
+                     (required_by_application type_parameters
+                        (fun signature -> signature.printer) signatures)
+              in
+              let equality : string list =
                 List.filter
                   (fun parameter ->
-                    List.mem parameter current || List.mem parameter called)
+                    List.mem parameter current.equality
+                    || List.mem parameter called_equalities)
                   type_parameters
               in
-              if required <> current then changed := true;
-              StringMap.add name (type_parameters, required) next
+              let printer : string list =
+                List.filter
+                  (fun parameter ->
+                    List.mem parameter current.printer
+                    || List.mem parameter called_printers)
+                  type_parameters
+              in
+              if equality <> current.equality || printer <> current.printer
+              then changed := true;
+              StringMap.add name { type_parameters; equality; printer } next
           | _ -> next)
         signatures declarations
     in
     if !changed then close next else next
   in
-  let signatures : (string list * string list) StringMap.t = close signatures in
+  let signatures : instance_signature StringMap.t = close signatures in
+  let arguments (select : instance_signature -> string list)
+      (value : L.application) : L.type_ref list =
+    match value.target with
+    | L.Local _ -> []
+    | L.Global name -> (
+        match StringMap.find_opt name signatures with
+        | None -> []
+        | Some signature ->
+            List.filter_map
+              (fun parameter ->
+                match
+                  parameter_position parameter 0 signature.type_parameters
+                with
+                | Some index -> List.nth_opt value.type_arguments index
+                | None -> None)
+              (select signature))
+  in
   let application (value : L.application) : L.application =
-    let instance_arguments : L.type_ref list =
-      match value.target with
-      | L.Local _ -> []
-      | L.Global name -> (
-          match StringMap.find_opt name signatures with
-          | None -> []
-          | Some (parameters, required) ->
-              List.filter_map
-                (fun parameter ->
-                  match parameter_position parameter 0 parameters with
-                  | Some index -> List.nth_opt value.type_arguments index
-                  | None -> None)
-                required)
-    in
-    { value with instance_arguments }
+    { value with
+      instance_arguments = arguments (fun signature -> signature.equality) value;
+      print_instance_arguments =
+        arguments (fun signature -> signature.printer) value }
   in
   let rule (value : L.rule) : L.rule =
     let conclusion : L.application =
@@ -1927,17 +2074,18 @@ let equality_parameters (declarations : L.located_declaration list) :
       let declaration : L.declaration =
         match located.declaration with
         | L.Relation relation ->
-            let (_, required) : string list * string list =
-              StringMap.find relation.name signatures
-            in
+            let required : instance_signature =
+              StringMap.find relation.name signatures in
             L.Relation
-              { relation with equality_parameters = required;
+              { relation with equality_parameters = required.equality;
+                print_parameters = required.printer;
                 rules = List.map rule relation.rules }
         | L.Builtin builtin ->
-            let (_, required) : string list * string list =
-              StringMap.find builtin.name signatures
-            in
-            L.Builtin { builtin with equality_parameters = required }
+            let required : instance_signature =
+              StringMap.find builtin.name signatures in
+            L.Builtin
+              { builtin with equality_parameters = required.equality;
+                print_parameters = required.printer }
         | declaration -> declaration
       in
       { located with declaration })

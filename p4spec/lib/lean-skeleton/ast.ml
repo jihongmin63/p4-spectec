@@ -6,8 +6,25 @@ module Lean = struct
     | TypeParameter of string
     | BuiltinType of string * type_ref list
     | Applied of string * type_ref list
-    | Pair of type_ref * type_ref
+    | TupleType of type_ref list
     | RelationType of type_ref list * type_ref
+
+  type print_format =
+    | PrintAbsent
+    | PrintLiteral of string
+    | PrintHole of int
+    | PrintFilteredJoin of print_format list
+    | PrintSequence of print_format list
+    | PrintFuse of print_format * print_format
+
+  let rec print_format_holes (format : print_format) : int list =
+    match format with
+    | PrintAbsent | PrintLiteral _ -> []
+    | PrintHole index -> [ index ]
+    | PrintFilteredJoin parts | PrintSequence parts ->
+        List.concat_map print_format_holes parts
+    | PrintFuse (left, right) ->
+        print_format_holes left @ print_format_holes right
 
   type constructor_ref = {
     type_name : string;
@@ -57,6 +74,7 @@ module Lean = struct
     target : reference;
     type_arguments : type_ref list;
     instance_arguments : type_ref list;
+    print_instance_arguments : type_ref list;
     arguments : term list;
   }
 
@@ -79,12 +97,15 @@ module Lean = struct
     name : string;
     arguments : type_ref list;
     result : type_ref;
+    print_origin : string;
+    print_format : print_format;
   }
 
   type builtin = {
     name : string;
     type_parameters : string list;
     equality_parameters : string list;
+    print_parameters : string list;
     parameters : type_ref list;
     result : type_ref;
     body : string;
@@ -110,6 +131,7 @@ module Lean = struct
         name : string;
         type_parameters : string list;
         equality_parameters : string list;
+        print_parameters : string list;
         argument_types : type_ref list;
         rules : rule list;
         notation : notation_part list option;
@@ -141,7 +163,7 @@ module Lean = struct
     | EqualityStructure of (string * type_ref) list
     | EqualityList of type_ref
     | EqualityOption of type_ref
-    | EqualityPair of type_ref * type_ref
+    | EqualityTuple of type_ref list
 
   type equality_shape = {
     equality_name : string;
@@ -155,11 +177,32 @@ module Lean = struct
     equality_instances : (type_ref * string) list;
   }
 
+  type print_shape_kind =
+    | PrintDatatype of constructor list
+    | PrintStructure
+    | PrintList of type_ref
+    | PrintOption of type_ref
+    | PrintTuple of type_ref list
+    | PrintFailure
+
+  type print_shape = {
+    print_name : string;
+    print_type : type_ref;
+    print_kind : print_shape_kind;
+  }
+
+  type manual_printer = {
+    printer_type_parameters : string list;
+    printer_shapes : print_shape list;
+    printer_instances : (type_ref * string) list;
+  }
+
   type declaration_group =
     | Single of declaration
     | Mutual of declaration list
     | DerivingDecidableEq of declaration_group
     | ManualDecidableEq of manual_equality
+    | ManualPrinter of manual_printer
 
   type program = declaration_group list
 end

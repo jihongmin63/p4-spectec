@@ -4,12 +4,14 @@ let name (value : string) : L.type_ref = L.Name value
 let list (value : L.type_ref) : L.type_ref = L.BuiltinType ("List", [ value ])
 
 let pair (left : L.type_ref) (right : L.type_ref) : L.type_ref =
-  L.Pair (left, right)
+  L.TupleType [ left; right ]
 
 let definition (name : string) (type_parameters : string list)
     (parameters : L.type_ref list) (result : L.type_ref) (body : string) :
     (L.builtin, string) result =
-  Ok { name; type_parameters; equality_parameters = []; parameters; result; body }
+  Ok
+    { name; type_parameters; equality_parameters = []; print_parameters = [];
+      parameters; result; body }
 
 let translate (builtin_name : string) (type_parameters : string list) :
     (L.builtin, string) result =
@@ -97,7 +99,6 @@ let translate (builtin_name : string) (type_parameters : string list) :
   | "bitacc", _ -> Error "bitacc without SpecTec's inclusive bit-slice bounds"
   | "bitacc_replace", _ ->
       Error "bitacc_replace without SpecTec's unmasked replacement behavior"
-  | "print_", _ -> Error "print_ because it depends on the P4 value unparser"
   | "sum", _ ->
       Error "sum because the current SpecTec runtime has no implementation"
   | "max", _ ->
