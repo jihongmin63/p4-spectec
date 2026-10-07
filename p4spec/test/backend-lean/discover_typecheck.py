@@ -3,6 +3,7 @@
 
 import argparse
 from collections import Counter
+import os
 from pathlib import Path
 
 
@@ -38,7 +39,7 @@ def read_suite(root: Path, name: str, expectation: str):
                 for suffix in (" (unknown)", " (should fail)"):
                     if source_name.endswith(suffix):
                         source_name = source_name[:-len(suffix)]
-            source = (log.parent / source_name).resolve()
+            source = Path(os.path.abspath(log.parent / source_name))
             if not source.is_file():
                 raise ValueError(f"{log}:{number}: missing P4 source {source}")
             if source in records:
@@ -56,7 +57,9 @@ def read_suite(root: Path, name: str, expectation: str):
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--list", action="store_true", help="print all discovered cases as TSV")
+    output = parser.add_mutually_exclusive_group()
+    output.add_argument("--list", action="store_true", help="print all discovered cases as TSV")
+    output.add_argument("--paths", action="store_true", help="print absolute P4 paths for --batch-cases")
     parser.add_argument("--root", type=Path, default=DEFAULT_ROOT, help="repository root")
     parser.add_argument(
         "--manifest", type=Path, default=Path(__file__).with_name("typecheck-cases.tsv"),
@@ -79,7 +82,7 @@ def main() -> None:
             if source not in cases or cases[source][:2] != (expectation, outcome):
                 raise ValueError(f"run/boot status disagreement: {source}")
 
-    selected = 0
+    selected = set()
     for number, line in enumerate(args.manifest.read_text().splitlines(), 1):
         if not line or line.startswith("#"):
             continue
@@ -87,11 +90,17 @@ def main() -> None:
         if len(fields) not in (2, 3):
             raise ValueError(f"{args.manifest}:{number}: invalid manifest entry")
         status, source_name = fields[:2]
-        source = (args.manifest.parent / source_name).resolve()
-        expected = "pass" if status == "accept" else "fail"
-        if source not in cases or cases[source][:2] != (status, expected):
-            raise ValueError(f"{args.manifest}:{number}: source/status absent from SL suite: {source}")
-        selected += 1
+        source = Path(os.path.abspath(args.manifest.parent / source_name))
+        if source not in cases:
+            raise ValueError(f"{args.manifest}:{number}: source absent from SL suite: {source}")
+        recorded, outcome, _ = cases[source]
+        if outcome != "excluded" and status != recorded and not (
+            status == "abort-reject" and recorded == "reject"
+        ):
+            raise ValueError(f"{args.manifest}:{number}: unexpected status for {source}")
+        if source in selected:
+            raise ValueError(f"{args.manifest}:{number}: duplicate source {source}")
+        selected.add(source)
 
     counts = Counter((expectation, outcome) for expectation, outcome, _ in cases.values())
     boot_unknown = sum(
@@ -99,7 +108,10 @@ def main() -> None:
         for name, _ in BOOT_SUITES
         for line in (root / name).read_text().splitlines()
     )
-    if args.list:
+    if args.paths:
+        for source in sorted(cases):
+            print(source)
+    elif args.list:
         print("expected\tlog_result\tsource\tsuite")
         for source, (expectation, outcome, suite) in sorted(cases.items()):
             print(f"{expectation}\t{outcome}\t{source.relative_to(root)}\t{suite}")
@@ -108,7 +120,7 @@ def main() -> None:
             f"SL cases: {len(cases)}; expected accept: {counts['accept', 'pass']}; "
             f"expected reject: {counts['reject', 'fail']}; "
             f"excluded: {counts['accept', 'excluded'] + counts['reject', 'excluded']}; "
-            f"boot unknown errors: {boot_unknown}; proof corpus selected: {selected}"
+            f"boot unknown errors: {boot_unknown}; proof corpus selected: {len(selected)}"
         )
 
 

@@ -253,6 +253,27 @@
  (action (diff case-oracle.lean case-oracle.actual)))
 
 (rule
+ (target case-oracle.lean.gz)
+ (deps case-oracle.lean)
+ (action
+  (with-stdout-to case-oracle.lean.gz
+   (run gzip -n -c %{dep:case-oracle.lean}))))
+
+(rule
+ (target case-compressed.lean)
+ (deps case-obligation.watsup case-empty.p4 case-oracle.lean.gz)
+ (action
+  (with-stdout-to case-compressed.lean
+   (run %{exe:../../lib/lean-skeleton/main.exe}
+    --case %{dep:case-empty.p4} %{dep:case-oracle.lean.gz}
+    %{dep:case-obligation.watsup}))))
+
+(rule
+ (alias backend-lean)
+ (deps case-compressed.lean)
+ (action (run lean case-compressed.lean)))
+
+(rule
  (target case-oracle-check.actual)
  (deps case-manifest.tsv case-oracle.lean case-empty.p4 case-semicolon.p4
   case-obligation.watsup verify_oracles.py)
@@ -300,3 +321,24 @@
  (alias backend-lean)
  (deps case-rejection.actual)
  (action (diff case-rejection.expected case-rejection.actual)))
+
+(rule
+ (target fresh-reset.actual)
+ (deps
+  check_fresh_reset.py
+  (source_tree ../../../spec)
+  (source_tree ../../../p4c/p4include)
+  ../../../p4c/testdata/p4_16_samples/type-params.p4
+  ../../../p4c/testdata/p4_16_samples/extern2.p4)
+ (action
+  (with-stdout-to fresh-reset.actual
+   (run python3 %{dep:check_fresh_reset.py}
+    --exe %{exe:../../lib/lean-skeleton/main.exe}
+    --spec ../../../spec --include ../../../p4c/p4include
+    --first %{dep:../../../p4c/testdata/p4_16_samples/type-params.p4}
+    --middle %{dep:../../../p4c/testdata/p4_16_samples/extern2.p4}))))
+
+(rule
+ (alias backend-lean)
+ (deps fresh-reset.actual)
+ (action (diff fresh-reset.expected fresh-reset.actual)))

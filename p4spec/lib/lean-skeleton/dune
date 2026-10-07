@@ -13,4 +13,4 @@
   pipeline
   case_obligation
   main)
- (libraries lang domain util pass diagnostic runtime p4 p4spectec))
+ (libraries lang domain util pass diagnostic runtime p4 p4spectec interface unix))

@@ -8,12 +8,15 @@ type options = {
   obligations_only : bool;
   dump_output : string option;
   check_rejection : string option;
+  batch_cases : string option;
+  case_range : (int * int) option;
 }
 
 let usage =
   "Usage: lean-skeleton [--keep-going] [--obligations-only] \
    [--case P4 EXPECTED | --reject-case P4 | --manifest TSV]... \
-   [--dump-output P4 | --check-rejection P4] \
+   [--case-range START COUNT] \
+   [--dump-output P4 | --check-rejection P4 | --batch-cases PATHS] \
    [-I DIR]... <spec-path>..."
 
 let read_manifest path =
@@ -33,11 +36,13 @@ let read_manifest path =
                     Some (Case_obligation.Accept, source, Some expected)
                 | ["reject"; source] when source <> "" ->
                     Some (Case_obligation.Reject, source, None)
+                | ["abort-reject"; source] when source <> "" ->
+                    Some (Case_obligation.AbortReject, source, None)
                 | _ -> None
               in
               (match entry with
               | None ->
-                  Error (Printf.sprintf "%s:%d: expected accept<TAB>path<TAB>expected or reject<TAB>path"
+                  Error (Printf.sprintf "%s:%d: expected accept<TAB>path<TAB>expected, reject<TAB>path, or abort-reject<TAB>path"
                     path line_number)
               | Some (expectation, source, expected) ->
                   let relative name = if Filename.is_relative name then
@@ -69,13 +74,20 @@ let parse_options arguments =
         loop { options with dump_output = Some path } rest
     | "--check-rejection" :: path :: rest ->
         loop { options with check_rejection = Some path } rest
+    | "--batch-cases" :: path :: rest ->
+        loop { options with batch_cases = Some path } rest
+    | "--case-range" :: start :: count :: rest ->
+        (match int_of_string_opt start, int_of_string_opt count with
+        | Some start, Some count when start >= 0 && count > 0 ->
+            loop { options with case_range = Some (start, count) } rest
+        | _ -> Error "--case-range requires a nonnegative start and positive count")
     | "--manifest" :: path :: rest ->
         let* cases = read_manifest path in
         loop { options with cases = List.rev_append cases options.cases } rest
     | "-I" :: path :: rest ->
         loop { options with includes_p4 = path :: options.includes_p4 } rest
     | ("--case" | "--reject-case" | "--manifest" | "--dump-output" |
-       "--check-rejection" | "-I") :: [] -> Error usage
+       "--check-rejection" | "--batch-cases" | "--case-range" | "-I") :: [] -> Error usage
     | argument :: _ when String.starts_with ~prefix:"-" argument ->
         Error ("Unknown option: " ^ argument ^ "\n" ^ usage)
     | path :: rest ->
@@ -83,17 +95,31 @@ let parse_options arguments =
   in
   loop { paths_spec = []; includes_p4 = []; cases = [];
          keep_going = false; obligations_only = false; dump_output = None;
-         check_rejection = None } arguments
+         check_rejection = None; batch_cases = None; case_range = None } arguments
 
 let read_expected path =
   try
-    let channel = open_in_bin path in
-    Fun.protect ~finally:(fun () -> close_in channel) (fun () ->
-      let expected = really_input_string channel (in_channel_length channel)
-        |> String.trim in
-      if expected = "" then Error ("empty expected output: " ^ path)
-      else Ok expected)
-  with Sys_error message -> Error message
+    let compressed = Filename.check_suffix path ".gz" in
+    let channel = if compressed then
+      Unix.open_process_args_in "gzip" [|"gzip"; "-dc"; "--"; path|]
+    else open_in_bin path in
+    let buffer = Buffer.create 4096 in
+    let bytes = Bytes.create 16384 in
+    let rec read () =
+      let count = input channel bytes 0 (Bytes.length bytes) in
+      if count > 0 then (Buffer.add_subbytes buffer bytes 0 count; read ()) in
+    read ();
+    let status = if compressed then Unix.close_process_in channel
+      else (close_in channel; Unix.WEXITED 0) in
+    match status with
+    | Unix.WEXITED 0 ->
+        let expected = Buffer.contents buffer |> String.trim in
+        if expected = "" then Error ("empty expected output: " ^ path)
+        else Ok expected
+    | _ -> Error ("cannot decompress expected output: " ^ path)
+  with
+  | Sys_error message -> Error message
+  | Unix.Unix_error (error, _, _) -> Error (Unix.error_message error)
 
 let rec parse_cases includes_p4 = function
   | [] -> Ok []
@@ -156,6 +182,62 @@ let check_rejection paths_spec includes_p4 path =
   | Fail (`Syntax diagnostic) -> Error diagnostic
   | Fail (`Runtime failure) -> Error (diagnostic_of_failure failure)
 
+let read_batch_paths path =
+  try
+    let channel = open_in path in
+    Fun.protect ~finally:(fun () -> close_in channel) (fun () ->
+      let rec read paths = match input_line channel with
+        | line ->
+            let line = String.trim line in
+            read (if line = "" then paths else line :: paths)
+        | exception End_of_file -> Ok (List.rev paths)
+      in
+      read [])
+  with Sys_error message ->
+    Error (Diagnostic.error ~source:"oracle" Util.Source.no_region message)
+
+let scan_batch paths_spec spec_il includes_p4 list_path =
+  let open Runtime.Sim.Signature in
+  let diagnostic message =
+    Diagnostic.error ~source:"oracle" Util.Source.no_region message in
+  let lift = function
+    | Ok value -> Ok value
+    | Error error -> Error (diagnostic (P4spectec.Error.to_string error)) in
+  let* paths = read_batch_paths list_path in
+  let* spec_sim = lift (P4spectec.spec_of_mode SL_mode paths_spec) in
+  let* simulator = lift (P4spectec.build_sim ~det:true spec_sim) in
+  let (module Simulator : SIM) = simulator in
+  let env = Translator.build_env spec_il in
+  let one_line text =
+    String.map (function '\n' | '\r' | '\t' -> ' ' | char -> char) text in
+  List.iter (fun path ->
+    (* Interp.clear resets caches, but not the interface's fresh_typeId counter. *)
+    Interface.P4.Builtin_P4.init ();
+    Simulator.Interp.clear ();
+    let status, detail =
+      try match Simulator.Interp.eval_program "Program_ok" includes_p4 path with
+      | Pass [ value ] ->
+          let term = Case_obligation.translate_value env
+            (Ast.Lean.Name "p4programIR") value
+            |> Printer.print_term [] in
+          if String.contains term '\n' || String.contains term '\t' then
+            "translation-error", "Lean output contains a tab or newline"
+          else "accept", term
+      | Pass values -> "bad-arity", string_of_int (List.length values)
+      | Fail (`Runtime (Unmatch _)) -> "reject", ""
+      | Fail (`Syntax diagnostic) ->
+          "syntax", snd (Diagnostic.region_msg diagnostic)
+      | Fail (`Runtime failure) ->
+          "abort", snd (Diagnostic.region_msg (diagnostic_of_failure failure))
+      with
+      | Translator.Unsupported_il diagnostic ->
+          "translation-error", snd (Diagnostic.region_msg diagnostic)
+      | exn -> "crash", Printexc.to_string exn
+    in
+    print_endline (status ^ "\t" ^ path ^ "\t" ^ one_line detail);
+    flush stdout) paths;
+  Ok ()
+
 let () =
   let arguments : string list = Array.to_list Sys.argv |> List.tl in
   let options = match parse_options arguments with
@@ -170,27 +252,49 @@ let () =
     prerr_endline
       "--keep-going cannot emit case propositions; use --obligations-only";
     exit 2);
-  if (options.dump_output <> None || options.check_rejection <> None) &&
+  if options.case_range <> None && options.cases = [] then (
+    prerr_endline "--case-range requires cases";
+    exit 2);
+  (match options.case_range with
+  | Some (start, _) when start >= List.length options.cases ->
+      prerr_endline "--case-range starts beyond the last case";
+      exit 2
+  | _ -> ());
+  if (options.dump_output <> None || options.check_rejection <> None ||
+      options.batch_cases <> None) &&
      (options.cases <> [] || options.obligations_only || options.keep_going ||
-      (options.dump_output <> None && options.check_rejection <> None)) then (
+      options.case_range <> None ||
+      List.length (List.filter Option.is_some
+        [options.dump_output; options.check_rejection; options.batch_cases]) > 1) then (
     prerr_endline "oracle checks cannot be combined with cases or translation options";
     exit 2);
   let result, collected_report =
     Diagnostic.collect (fun () ->
         let* spec_il = Pass.elab options.paths_spec in
-        match options.dump_output, options.check_rejection with
-        | Some path, None ->
+        match options.dump_output, options.check_rejection, options.batch_cases with
+        | None, None, Some path ->
+            let* () = scan_batch options.paths_spec spec_il
+              options.includes_p4 path in
+            Ok ("", [])
+        | Some path, None, None ->
             let* output = oracle_output options.paths_spec spec_il
               options.includes_p4 path in
             Ok (output, [])
-        | None, Some path ->
+        | None, Some path, None ->
             let* result = check_rejection options.paths_spec
               options.includes_p4 path in
             Ok (result, [])
-        | None, None ->
-        let* cases = parse_cases options.includes_p4 options.cases in
+        | None, None, None ->
+        let selected, start = match options.case_range with
+          | None -> options.cases, 0
+          | Some (start, count) ->
+              List.filteri (fun index _ -> index >= start && index < start + count)
+                options.cases,
+              start
+        in
+        let* cases = parse_cases options.includes_p4 selected in
         let* obligations =
-          try Ok (if cases = [] then "" else Case_obligation.render spec_il cases)
+          try Ok (if cases = [] then "" else Case_obligation.render ~start spec_il cases)
           with Translator.Unsupported_il diagnostic -> Error diagnostic
         in
         if options.obligations_only then Ok (obligations, [])
@@ -204,7 +308,7 @@ let () =
           let* lean_code = Pipeline.transpile spec_il in
           Ok ((if obligations = "" then lean_code else lean_code ^ "\n\n" ^ obligations),
               [])
-        | Some _, Some _ -> assert false)
+        | _ -> assert false)
   in
   let report : Diagnostic.Report.t =
     match result with
@@ -223,7 +327,7 @@ let () =
       (Diagnostic.Render.render_report ~ansi:Diagnostic.Ansi.plain report);
   match result with
   | Ok (lean_code, _) ->
-      print_endline lean_code;
+      if lean_code <> "" then print_endline lean_code;
       if List.exists (fun (diagnostic : Diagnostic.t) -> diagnostic.severity = Diagnostic.Error)
           (Diagnostic.Report.to_sorted_list report) then exit 1
   | Error _ -> exit 1

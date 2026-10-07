@@ -4,7 +4,7 @@ module V = Runtime.Value
 module Mixfix = Domain.Mixfix
 open Util.Source
 
-type expectation = Accept | Reject
+type expectation = Accept | Reject | AbortReject
 
 type case = {
   source : string;
@@ -124,18 +124,22 @@ let render_case (env : Translator.env) (index : int) (case : case) : string =
          "Program_ok " ^ name ^ "_input " ^ name ^ "_expected ∧\n"
          ^ "  ∀ output : p4programIR, Program_ok " ^ name
          ^ "_input output → output = " ^ name ^ "_expected")
-    | Reject, None ->
+    | (Reject | AbortReject), None ->
         ("", "¬ (∃ output : p4programIR, Program_ok " ^ name ^ "_input output)")
     | Accept, None -> invalid_arg "accepted case has no expected output"
-    | Reject, Some _ -> invalid_arg "rejected case has an expected output"
+    | (Reject | AbortReject), Some _ ->
+        invalid_arg "rejected case has an expected output"
   in
-  "-- " ^ name ^ ": " ^ Printf.sprintf "%S" case.source ^ "\n"
+  let note = match case.expectation with
+    | AbortReject -> " (interpreter abort; rejection to prove)"
+    | Accept | Reject -> "" in
+  "-- " ^ name ^ ": " ^ Printf.sprintf "%S" case.source ^ note ^ "\n"
   ^ "def " ^ name ^ "_input : p4program := " ^ input ^ "\n"
   ^ expected_definition
   ^ "def " ^ name ^ " : Prop := " ^ proposition
 
-let render (spec : S.spec) (cases : case list) : string =
+let render ?(start = 0) (spec : S.spec) (cases : case list) : string =
   let env = Translator.build_env spec in
   "namespace SpecTec\n\n"
-  ^ String.concat "\n\n" (List.mapi (render_case env) cases)
+  ^ String.concat "\n\n" (List.mapi (fun index case -> render_case env (start + index) case) cases)
   ^ "\n\nend SpecTec"

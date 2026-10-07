@@ -1,1 +1,0 @@
-(@p4programIR.«% ';'» ([(@declarationIR.«% ACTION % `( % `) %» (@annotationList._EMPTY) "a" ([] : parameterListIR) (@blockStatementIR.«% `{ % `}» (@annotationList._EMPTY) ([(@blockElementStatementIR.«';'»)] : blockElementStatementListIR)))] : (_root_.List declarationIR)))
