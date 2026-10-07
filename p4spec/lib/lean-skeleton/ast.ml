@@ -38,7 +38,7 @@ module Lean = struct
     | StructureUpdate of type_ref * term * string * term
     | Projection of string * string * term
     | Index of term * term
-    | Decide of prop
+    | Decide of type_ref list * prop
 
   and comparison = Eq | Ne | Lt | Le | Gt | Ge
 
@@ -56,6 +56,7 @@ module Lean = struct
   and application = {
     target : reference;
     type_arguments : type_ref list;
+    instance_arguments : type_ref list;
     arguments : term list;
   }
 
@@ -83,6 +84,7 @@ module Lean = struct
   type builtin = {
     name : string;
     type_parameters : string list;
+    equality_parameters : string list;
     parameters : type_ref list;
     result : type_ref;
     body : string;
@@ -107,6 +109,7 @@ module Lean = struct
     | Relation of {
         name : string;
         type_parameters : string list;
+        equality_parameters : string list;
         argument_types : type_ref list;
         rules : rule list;
         notation : notation_part list option;
@@ -133,7 +136,30 @@ module Lean = struct
     at : Util.Source.region;
   }
 
-  type declaration_group = Single of declaration | Mutual of declaration list
+  type equality_shape_kind =
+    | EqualityDatatype of constructor list
+    | EqualityStructure of (string * type_ref) list
+    | EqualityList of type_ref
+    | EqualityOption of type_ref
+    | EqualityPair of type_ref * type_ref
+
+  type equality_shape = {
+    equality_name : string;
+    equality_type : type_ref;
+    equality_kind : equality_shape_kind;
+  }
+
+  type manual_equality = {
+    equality_type_parameters : string list;
+    equality_shapes : equality_shape list;
+    equality_instances : (type_ref * string) list;
+  }
+
+  type declaration_group =
+    | Single of declaration
+    | Mutual of declaration list
+    | DerivingDecidableEq of declaration_group
+    | ManualDecidableEq of manual_equality
 
   type program = declaration_group list
 end

@@ -60,7 +60,8 @@ let some (term : L.term) : L.term = native "Option.some" [ term ]
 
 let application (name : string) (types : L.type_ref list) (arguments : L.term list) :
     L.application =
-  { target = L.Global ("$" ^ name); type_arguments = types; arguments }
+  { target = L.Global ("$" ^ name); type_arguments = types;
+    instance_arguments = []; arguments }
 
 let holds (name : string) (types : L.type_ref list) (arguments : L.term list) :
     L.premise =
@@ -77,7 +78,8 @@ let rule (relation : string) (types : L.type_ref list) (name : string)
 let relation (name : string) (type_parameters : string list)
     (argument_types : L.type_ref list) (rules : L.rule list) : L.declaration =
   L.Relation
-    { name = "$" ^ name; type_parameters; argument_types; rules; notation = None }
+    { name = "$" ^ name; type_parameters; equality_parameters = [];
+      argument_types; rules; notation = None }
 
 (* First pair with key k: a later pair is reached only past pairs with other
    keys, as in Maps.map_find_opt and Lists.assoc_. *)

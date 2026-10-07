@@ -45,14 +45,16 @@ let rec term_references (term : L.term) : StringSet.t =
           (StringSet.union (type_references source) (type_references target))
     | Lambda (_, typ, _) -> type_references typ
     | Projection (name, _, _) -> StringSet.singleton name
+    | Decide (types, _) -> unions (List.map type_references types)
     | Boolean _ | Text _ | Native _ | Unary _ | Binary _ | Tuple _
-    | ListLiteral _ | Index _ | Decide _ -> StringSet.empty
+    | ListLiteral _ | Index _ -> StringSet.empty
   in
   StringSet.union own (unions (List.map term_references (Traversal.term_children term)))
 
 let application_references (application : L.application) : StringSet.t =
   StringSet.union (reference_names application.target)
-    (unions (List.map type_references application.type_arguments
+    (unions (List.map type_references
+       (application.type_arguments @ application.instance_arguments)
        @ List.map term_references application.arguments))
 
 let premise_references (premise : L.premise) : StringSet.t =
@@ -275,6 +277,187 @@ let validate_negative_premises (names : string list)
 
 type sort = Data | Proposition
 
+let data_declaration (declaration : L.declaration) : bool =
+  match declaration with L.Datatype _ | L.Structure _ -> true | _ -> false
+
+let data_type_parameters (declaration : L.declaration) : string list =
+  match declaration with
+  | L.Datatype { type_parameters; _ } -> type_parameters
+  | L.Structure _ -> []
+  | _ -> assert false
+
+let data_type (declaration : L.declaration) : L.type_ref =
+  match declaration with
+  | L.Datatype { name; type_parameters = []; _ } | L.Structure { name; _ } ->
+      L.Name name
+  | L.Datatype { name; type_parameters; _ } ->
+      L.Applied (name, List.map (fun name -> L.TypeParameter name) type_parameters)
+  | _ -> assert false
+
+let rec contains_type_name (names : StringSet.t) (typ : L.type_ref) : bool =
+  match typ with
+  | Name name -> StringSet.mem name names
+  | Applied (name, arguments) ->
+      StringSet.mem name names || List.exists (contains_type_name names) arguments
+  | BuiltinType (_, arguments) -> List.exists (contains_type_name names) arguments
+  | Pair (left, right) ->
+      contains_type_name names left || contains_type_name names right
+  | RelationType (arguments, result) ->
+      List.exists (contains_type_name names) (result :: arguments)
+  | TypeParameter _ -> false
+
+let direct_type_name (names : StringSet.t) (typ : L.type_ref) : bool =
+  match typ with
+  | Name name | Applied (name, _) -> StringSet.mem name names
+  | _ -> false
+
+let declaration_field_types (declaration : L.declaration) : L.type_ref list =
+  match declaration with
+  | Datatype { constructors; _ } ->
+      List.concat_map (fun (constructor : L.constructor) -> constructor.arguments)
+        constructors
+  | Structure { fields; _ } -> List.map snd fields
+  | _ -> []
+
+let has_nested_recursion (names : StringSet.t) (declaration : L.declaration) : bool =
+  List.exists
+    (fun typ -> contains_type_name names typ && not (direct_type_name names typ))
+    (declaration_field_types declaration)
+
+let equality_function_name (root_names : StringSet.t) (typ : L.type_ref) : string =
+  match typ with
+  | Name name | Applied (name, _) when StringSet.mem name root_names ->
+      "decEq_" ^ name
+  | _ ->
+      "decEq_shape_"
+      ^ String.sub (Digest.to_hex (Digest.string (Translator.type_code typ))) 0 12
+
+let instantiate_datatype (at : Util.Source.region) (typ : L.type_ref)
+    (datatype : L.datatype) : L.constructor list =
+  let arguments : L.type_ref list =
+    match typ with
+    | Name _ -> []
+    | Applied (_, arguments) -> arguments
+    | _ -> assert false
+  in
+  if List.length datatype.type_parameters <> List.length arguments then
+    Translator.unsupported at
+      (Printf.sprintf "DecidableEq type arity in %s: expected %d, got %d"
+         datatype.name (List.length datatype.type_parameters) (List.length arguments));
+  let bindings : (string * L.type_ref) list =
+    List.combine datatype.type_parameters arguments
+  in
+  List.map
+    (fun (constructor : L.constructor) ->
+      { constructor with
+        arguments =
+          List.map (Translator.substitute_type_parameters bindings)
+            constructor.arguments;
+        result = Translator.substitute_type_parameters bindings constructor.result })
+    datatype.constructors
+
+let manual_equality (graph : graph) (at : Util.Source.region)
+    (declarations : L.declaration list) : L.manual_equality =
+  let root_names : StringSet.t =
+    declarations |> List.map defined_name |> StringSet.of_list
+  in
+  let root_declarations : L.declaration StringMap.t =
+    declarations
+    |> List.map (fun declaration -> defined_name declaration, declaration)
+    |> List.to_seq |> StringMap.of_seq
+  in
+  let type_parameters : string list =
+    match declarations with
+    | declaration :: _ -> data_type_parameters declaration
+    | [] -> assert false
+  in
+  let rec collect (trail : (string * L.type_ref) list)
+      (shapes : L.equality_shape list) (typ : L.type_ref) :
+      L.equality_shape list =
+    let trail : (string * L.type_ref) list =
+      match typ with
+      | Name name | Applied (name, _) -> (
+          match List.assoc_opt name trail with
+          | Some previous when previous <> typ ->
+              Translator.unsupported at
+                ("DecidableEq non-uniform recursive type "
+                ^ Translator.type_code typ ^ " after "
+                ^ Translator.type_code previous)
+          | Some _ -> trail
+          | None -> (name, typ) :: trail)
+      | _ -> trail
+    in
+    if List.exists (fun (shape : L.equality_shape) -> shape.equality_type = typ) shapes
+    then shapes
+    else
+      let kind : L.equality_shape_kind =
+        match typ with
+        | BuiltinType ("List", [ element ]) -> L.EqualityList element
+        | BuiltinType ("Option", [ element ]) -> L.EqualityOption element
+        | Pair (left, right) -> L.EqualityPair (left, right)
+        | Name name | Applied (name, _) -> (
+            let declaration : L.declaration option =
+              match StringMap.find_opt name root_declarations with
+              | Some declaration -> Some declaration
+              | None ->
+                  Option.map
+                    (fun (node : node) -> node.source.declaration)
+                    (StringMap.find_opt name graph)
+            in
+            match declaration with
+            | Some (Datatype datatype) ->
+                L.EqualityDatatype (instantiate_datatype at typ datatype)
+            | Some (Structure { fields; _ }) when typ = L.Name name ->
+                L.EqualityStructure fields
+            | _ ->
+                Translator.unsupported at
+                  ("DecidableEq nested recursive type " ^ Translator.type_code typ))
+        | _ ->
+            Translator.unsupported at
+              ("DecidableEq nested recursive shape " ^ Translator.type_code typ)
+      in
+      let shape : L.equality_shape =
+        { equality_name = equality_function_name root_names typ;
+          equality_type = typ; equality_kind = kind }
+      in
+      let shapes : L.equality_shape list = shapes @ [ shape ] in
+      let children : L.type_ref list =
+        match kind with
+        | EqualityDatatype constructors ->
+            List.concat_map
+              (fun (constructor : L.constructor) -> constructor.arguments)
+              constructors
+        | EqualityStructure fields -> List.map snd fields
+        | EqualityList element | EqualityOption element -> [ element ]
+        | EqualityPair (left, right) -> [ left; right ]
+      in
+      List.fold_left
+        (fun shapes child ->
+          if contains_type_name root_names child then collect trail shapes child
+          else shapes)
+        shapes children
+  in
+  let root_types : L.type_ref list = List.map data_type declarations in
+  let shapes : L.equality_shape list =
+    List.fold_left (collect []) [] root_types
+  in
+  { equality_type_parameters = type_parameters;
+    equality_shapes = shapes;
+    equality_instances =
+      List.map
+        (fun typ -> typ, equality_function_name root_names typ)
+        root_types }
+
+let data_groups (graph : graph) (at : Util.Source.region)
+    (declarations : L.declaration list) (group : L.declaration_group) :
+    L.declaration_group list =
+  let names : StringSet.t =
+    declarations |> List.map defined_name |> StringSet.of_list
+  in
+  if List.exists (has_nested_recursion names) declarations then
+    [ group; L.ManualDecidableEq (manual_equality graph at declarations) ]
+  else [ L.DerivingDecidableEq group ]
+
 let group_program (graph : graph) (names : string list) : L.program =
   let sources : L.located_declaration list =
     List.map (fun name -> (StringMap.find name graph).source) names
@@ -306,6 +489,9 @@ let group_program (graph : graph) (names : string list) : L.program =
         | _ -> ())
       aliases;
   match sources with
+  | [ source ] when data_declaration source.declaration ->
+      data_groups graph source.at [ source.declaration ]
+        (L.Single source.declaration)
   | [ source ] -> [ L.Single source.declaration ]
   | _ ->
       let signatures : (string list * sort) list =
@@ -346,7 +532,10 @@ let group_program (graph : graph) (names : string list) : L.program =
               group)
           (topological_components alias_graph)
       in
-      L.Mutual declarations :: ordered_aliases
+      (if List.for_all data_declaration declarations then
+         data_groups graph at declarations (L.Mutual declarations)
+       else [ L.Mutual declarations ])
+      @ ordered_aliases
 
 let order (declarations : L.located_declaration list) :
     (L.program, Diagnostic.t) result =

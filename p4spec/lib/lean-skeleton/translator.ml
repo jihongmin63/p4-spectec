@@ -459,9 +459,9 @@ let expand_expression_type (env : env) (at : region) (typ : L.type_ref) : L.type
   in
   expand_type_aliases lookup at [] typ
 
-let primitive_equality_type (typ : L.type_ref) : bool =
+let ordered_comparison_type (typ : L.type_ref) : bool =
   match typ with
-  | BuiltinType (("Nat" | "Int" | "Bool" | "String"), []) -> true
+  | BuiltinType (("Nat" | "Int"), []) -> true
   | _ -> false
 
 let function_reference (env : env) (functions : (string * L.type_ref) list)
@@ -596,6 +596,7 @@ let translate_iteration (env : env) (type_parameters : string list)
   let application (collections : L.term list) : L.application =
     { target = L.Global name;
       type_arguments = List.map (fun name -> L.TypeParameter name) type_parameters;
+      instance_arguments = [];
       arguments = context_terms @ collections }
   in
   let empty : L.term list = List.map
@@ -625,7 +626,7 @@ let translate_iteration (env : env) (type_parameters : string list)
       conclusion = application populated }
   ] in
   let helper : L.declaration = L.Relation
-    { name; type_parameters;
+    { name; type_parameters; equality_parameters = [];
       argument_types = List.map snd context @ List.map (fun (_, _, typ) -> collection_type typ) vectors;
       rules; notation = None }
   in
@@ -766,7 +767,7 @@ let rec check_term (env : env) (type_parameters : string list) (at : region)
       in
       (match source, checked with
       | BuiltinType ("Int", []), BuiltinType ("Nat", []) ->
-          L.Decide (L.Comparison (L.Le,
+          L.Decide ([], L.Comparison (L.Le,
             L.Number ("0", L.BuiltinType ("Int", [])), term))
       | _ -> unsupported at
           ("RecurseSC from " ^ type_code source ^ " to " ^ type_code checked))
@@ -923,6 +924,7 @@ let rec translate_term (env : env) (type_parameters : string list)
       let result : terms_result = collect_terms translate_argument next arguments in
       let application : L.application =
         { target; type_arguments = List.map (translate_type_with_parameters type_parameters) type_arguments;
+          instance_arguments = [];
           arguments = result.terms }
       in
       if direct then combine_term result (L.Apply application)
@@ -1014,21 +1016,43 @@ let rec translate_term (env : env) (type_parameters : string list)
       in
       build (List.map snd fields) (fun values -> L.StructureLiteral (typ, List.combine (List.map fst fields) values))
   | CmpE (operator, _, left, right) ->
-      if not (primitive_equality_type (numeric_type left)) then
-        unsupported exp.at "comparison in term position for a non-primitive type";
-      if numeric_type left <> numeric_type right then
+      let left_type : L.type_ref = numeric_type left in
+      let right_type : L.type_ref = numeric_type right in
+      if left_type <> right_type then
         unsupported exp.at "comparison operands with different runtime types";
       let operator : L.comparison = match operator with
         | `EqOp -> L.Eq | `NeOp -> L.Ne | `LtOp -> L.Lt | `LeOp -> L.Le | `GtOp -> L.Gt | `GeOp -> L.Ge
       in
-      binary left right (fun left right -> L.Decide (L.Comparison (operator, left, right)))
+      let empty_test (value : S.exp) : string option =
+        match value.it, numeric_type value with
+        | ListE [], BuiltinType ("List", [ _ ]) -> Some "List.isEmpty"
+        | OptE None, BuiltinType ("Option", [ _ ]) -> Some "Option.isNone"
+        | _ -> None
+      in
+      (match operator, empty_test left, empty_test right with
+      | (L.Eq | L.Ne), Some test, _ ->
+          unary right (fun term ->
+            let result : L.term = L.Native (test, [ term ]) in
+            if operator = L.Ne then L.Unary ("!", result) else result)
+      | (L.Eq | L.Ne), None, Some test ->
+          unary left (fun term ->
+            let result : L.term = L.Native (test, [ term ]) in
+            if operator = L.Ne then L.Unary ("!", result) else result)
+      | (L.Eq | L.Ne), None, None ->
+          binary left right (fun left right ->
+            L.Decide ([ left_type ], L.Comparison (operator, left, right)))
+      | _ ->
+          if not (ordered_comparison_type left_type) then
+            unsupported exp.at "ordered comparison of non-numeric operands";
+          binary left right (fun left right ->
+            L.Decide ([], L.Comparison (operator, left, right))))
   | MemE (element, collection) ->
-      if not (primitive_equality_type (numeric_type element)) then
-        unsupported exp.at "membership in term position for a non-primitive type";
+      let element_type : L.type_ref = numeric_type element in
       (match expanded collection with
-      | BuiltinType ("List", [ typ ]) when typ = numeric_type element -> ()
+      | BuiltinType ("List", [ typ ]) when typ = element_type -> ()
       | _ -> unsupported exp.at "membership in a non-list");
-      binary element collection (fun element collection -> L.Decide (L.Membership (element, collection)))
+      binary element collection (fun element collection ->
+        L.Decide ([ element_type ], L.Membership (element, collection)))
   | IterE (body, (iter, variables)) -> (
       match identity_iteration_variable exp with
       | Some (id, iters) ->
@@ -1218,7 +1242,8 @@ let translate_application (env : env) (type_parameters : string list)
     (type_arguments : L.type_ref list) (arguments : S.exp list) :
     L.application * terms_result =
   let result : terms_result = collect_terms (translate_term env type_parameters functions) next arguments in
-  { target = L.Global name; type_arguments; arguments = result.terms }, result
+  { target = L.Global name; type_arguments; instance_arguments = [];
+    arguments = result.terms }, result
 
 type condition_result = { condition : L.prop; evaluation : terms_result }
 
@@ -1310,6 +1335,7 @@ let translate_branch (env : env) (type_parameters : string list)
   let conclusion : L.application =
     { target = L.Global relation_name;
       type_arguments = List.map (fun name -> L.TypeParameter name) type_parameters;
+      instance_arguments = [];
       arguments = result.terms }
   in
   let result : terms_result = List.fold_left
@@ -1455,7 +1481,10 @@ let translate_relation_unrenamed (env : env) (name : string) (type_parameters : 
       ([], [], []) branches
   in
   let rules : L.rule list = List.rev rules in
-  L.Relation { name; type_parameters; argument_types; rules; notation } :: helpers
+  L.Relation
+    { name; type_parameters; equality_parameters = []; argument_types; rules;
+      notation }
+  :: helpers
 
 let rename_relation_declarations (env : env) (type_parameters : string list)
     (declarations : L.declaration list) : L.declaration list =
@@ -1506,6 +1535,7 @@ let translate_otherwise_relation (env : env) (name : string)
   let application : L.application =
     { target = L.Global name;
       type_arguments = List.map (fun name -> L.TypeParameter name) type_parameters;
+      instance_arguments = [];
       arguments = List.map (fun (name, typ) -> L.Variable (name, typ)) binders }
   in
   let wrapper : L.rule =
@@ -1752,14 +1782,170 @@ let rec type_parameters_in (typ : L.type_ref) : string list =
   | RelationType (arguments, result) ->
       List.concat_map type_parameters_in (result :: arguments)
 
+let rec equality_types_in_term (term : L.term) : L.type_ref list =
+  let nested : L.type_ref list =
+    List.concat_map equality_types_in_term (Traversal.term_children term)
+  in
+  match term with L.Decide (types, _) -> types @ nested | _ -> nested
+
+let relation_terms (rules : L.rule list) : L.term list =
+  List.concat_map
+    (fun (rule : L.rule) ->
+      rule.conclusion.arguments
+      @ List.concat_map Traversal.premise_terms rule.premises)
+    rules
+
+let relation_applications (rules : L.rule list) : L.application list =
+  List.concat_map
+    (fun (rule : L.rule) ->
+      rule.conclusion
+      :: (List.concat_map Traversal.term_applications
+            rule.conclusion.arguments
+         @ List.concat_map Traversal.premise_applications rule.premises))
+    rules
+
+let required_type_parameters (parameters : string list)
+    (types : L.type_ref list) : string list =
+  let mentioned : string list = List.concat_map type_parameters_in types in
+  List.filter (fun parameter -> List.mem parameter mentioned) parameters
+
+let equality_parameters (declarations : L.located_declaration list) :
+    L.located_declaration list =
+  let signatures : (string list * string list) StringMap.t =
+    List.fold_left
+      (fun signatures (located : L.located_declaration) ->
+        match located.declaration with
+        | L.Relation { name; type_parameters; equality_parameters; rules; _ } ->
+            let direct : string list =
+              relation_terms rules
+              |> List.concat_map equality_types_in_term
+              |> required_type_parameters type_parameters
+            in
+            StringMap.add name
+              (type_parameters,
+               List.filter
+                 (fun parameter ->
+                   List.mem parameter equality_parameters
+                   || List.mem parameter direct)
+                 type_parameters)
+              signatures
+        | L.Builtin builtin ->
+            StringMap.add builtin.name
+              (builtin.type_parameters, builtin.equality_parameters)
+              signatures
+        | _ -> signatures)
+      StringMap.empty declarations
+  in
+  let rec parameter_position (name : string) (index : int)
+      (parameters : string list) : int option =
+    match parameters with
+    | [] -> None
+    | parameter :: _ when parameter = name -> Some index
+    | _ :: rest -> parameter_position name (index + 1) rest
+  in
+  let required_by_application (caller_parameters : string list)
+      (signatures : (string list * string list) StringMap.t)
+      (application : L.application) : string list =
+    match application.target with
+    | L.Local _ -> []
+    | L.Global name -> (
+        match StringMap.find_opt name signatures with
+        | None -> []
+        | Some (callee_parameters, callee_equalities) ->
+            let types : L.type_ref list =
+              List.filter_map
+                (fun parameter ->
+                  match parameter_position parameter 0 callee_parameters with
+                  | Some index -> List.nth_opt application.type_arguments index
+                  | None -> None)
+                callee_equalities
+            in
+            required_type_parameters caller_parameters types)
+  in
+  let rec close (signatures : (string list * string list) StringMap.t) :
+      (string list * string list) StringMap.t =
+    let changed : bool ref = ref false in
+    let next : (string list * string list) StringMap.t =
+      List.fold_left
+        (fun next (located : L.located_declaration) ->
+          match located.declaration with
+          | L.Relation { name; type_parameters; rules; _ } ->
+              let (_, current) : string list * string list =
+                StringMap.find name signatures
+              in
+              let called : string list =
+                relation_applications rules
+                |> List.concat_map
+                     (required_by_application type_parameters signatures)
+              in
+              let required : string list =
+                List.filter
+                  (fun parameter ->
+                    List.mem parameter current || List.mem parameter called)
+                  type_parameters
+              in
+              if required <> current then changed := true;
+              StringMap.add name (type_parameters, required) next
+          | _ -> next)
+        signatures declarations
+    in
+    if !changed then close next else next
+  in
+  let signatures : (string list * string list) StringMap.t = close signatures in
+  let application (value : L.application) : L.application =
+    let instance_arguments : L.type_ref list =
+      match value.target with
+      | L.Local _ -> []
+      | L.Global name -> (
+          match StringMap.find_opt name signatures with
+          | None -> []
+          | Some (parameters, required) ->
+              List.filter_map
+                (fun parameter ->
+                  match parameter_position parameter 0 parameters with
+                  | Some index -> List.nth_opt value.type_arguments index
+                  | None -> None)
+                required)
+    in
+    { value with instance_arguments }
+  in
+  let rule (value : L.rule) : L.rule =
+    let conclusion : L.application =
+      application
+        { value.conclusion with
+          arguments =
+            List.map (Traversal.map_term_applications application)
+              value.conclusion.arguments }
+    in
+    { value with conclusion;
+      premises =
+        List.map (Traversal.map_premise_applications application)
+          value.premises }
+  in
+  List.map
+    (fun (located : L.located_declaration) ->
+      let declaration : L.declaration =
+        match located.declaration with
+        | L.Relation relation ->
+            let (_, required) : string list * string list =
+              StringMap.find relation.name signatures
+            in
+            L.Relation
+              { relation with equality_parameters = required;
+                rules = List.map rule relation.rules }
+        | L.Builtin builtin ->
+            let (_, required) : string list * string list =
+              StringMap.find builtin.name signatures
+            in
+            L.Builtin { builtin with equality_parameters = required }
+        | declaration -> declaration
+      in
+      { located with declaration })
+    declarations
+
 let terms_in_declaration (located : L.located_declaration) : L.term list =
   match located.declaration with
-  | Relation { rules; _ } ->
-      List.concat_map
-        (fun (rule : L.rule) ->
-          rule.conclusion.arguments
-          @ List.concat_map Traversal.premise_terms rule.premises)
-        rules
+  | Relation { rules; _ } -> relation_terms rules
   | _ -> []
 
 let type_declaration_region (program : S.spec) (at : region)
@@ -1853,7 +2039,10 @@ let translate (program : S.spec) : (L.located_declaration list, Diagnostic.t) re
              (translate_declaration env declaration))
          program
     in
-    Ok (declarations @ generated_declarations env program declarations)
+    let declarations : L.located_declaration list =
+      declarations @ generated_declarations env program declarations
+    in
+    Ok (equality_parameters declarations)
   with Unsupported_il diagnostic -> Error diagnostic
 
 let translate_all (program : S.spec) :
@@ -1874,5 +2063,8 @@ let translate_all (program : S.spec) :
       ([], []) program
   in
   let declarations : L.located_declaration list = List.rev declarations in
-  (declarations @ generated_declarations env program declarations,
-   List.rev diagnostics)
+  let declarations : L.located_declaration list =
+    declarations @ generated_declarations env program declarations
+    |> equality_parameters
+  in
+  (declarations, List.rev diagnostics)
