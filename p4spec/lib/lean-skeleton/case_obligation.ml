@@ -11,6 +11,7 @@ type case = {
   expectation : expectation;
   expected : string option;
   value : V.t;
+  fresh_context : (string list * string list) option;
 }
 
 let unsupported (value : V.t) (kind : string) : 'a =
@@ -120,10 +121,27 @@ let render_case (env : Translator.env) (index : int) (case : case) : string =
     (translate_value env (L.Name "p4program") case.value) in
   let expected_definition, proposition = match case.expectation, case.expected with
     | Accept, Some expected ->
-        ("def " ^ name ^ "_expected : p4programIR := " ^ expected ^ "\n",
-         "Program_ok " ^ name ^ "_input " ^ name ^ "_expected ∧\n"
-         ^ "  ∀ output : p4programIR, Program_ok " ^ name
-         ^ "_input output → output = " ^ name ^ "_expected")
+        let expected_definition =
+          "def " ^ name ^ "_expected : p4programIR := " ^ expected ^ "\n" in
+        (match case.fresh_context with
+        | None ->
+            (expected_definition,
+             "Program_ok " ^ name ^ "_input " ^ name ^ "_expected ∧\n"
+             ^ "  ∀ output : p4programIR, Program_ok " ^ name
+             ^ "_input output → output = " ^ name ^ "_expected")
+        | Some (allocated, protected) ->
+            let names suffix values = "def " ^ name ^ suffix
+              ^ " : List String := "
+              ^ Printer.print_term [] (L.ListLiteral (List.map (fun s -> L.Text s) values))
+              ^ "\n" in
+            let alpha = "FreshAlphaIR " ^ name ^ "_fresh_names " ^ name
+              ^ "_protected_names " ^ name ^ "_expected output" in
+            (expected_definition ^ names "_fresh_names" allocated
+               ^ names "_protected_names" protected,
+             "(∃ output : p4programIR, Program_ok " ^ name ^ "_input output ∧\n"
+             ^ "    " ^ alpha ^ ") ∧\n"
+             ^ "  ∀ output : p4programIR, Program_ok " ^ name
+             ^ "_input output → " ^ alpha))
     | (Reject | AbortReject), None ->
         ("", "¬ (∃ output : p4programIR, Program_ok " ^ name ^ "_input output)")
     | Accept, None -> invalid_arg "accepted case has no expected output"

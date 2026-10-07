@@ -69,6 +69,8 @@ module P4 = struct
   let checkpoint = Builtin_P4.checkpoint
   let seff = Builtin_P4.seff
 
+  let with_fresh_allocations = Builtin.Fresh.with_allocations
+
   (* Cache management *)
 
   module Cache = struct

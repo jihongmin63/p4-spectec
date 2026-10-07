@@ -51,8 +51,9 @@ def main() -> None:
     rules = [
         re.sub(r" : «InProgram:[^»]+» ", " : InProgram ", line)
         for line in program_body.splitlines()
-        if any(f"head := (@Atom.{name} " in line for name in NAMES)
-        or line.startswith("  | external_call ")
+        if "head :=" in line and (
+            any(f"head := (@Atom.{name} " in line for name in NAMES)
+            or line.startswith("  | external_call "))
     ]
     assert len(atoms) == len(NAMES) + 1, len(atoms)
     assert len(rules) == len(NAMES) + 1, len(rules)

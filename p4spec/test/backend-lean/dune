@@ -13,6 +13,41 @@
  (modules fresh_interp)
  (libraries p4spectec runtime interface diagnostic bignum.bigint))
 
+(executable
+ (name fresh_trace)
+ (modules fresh_trace)
+ (libraries builtin runtime util))
+
+(rule
+ (alias backend-lean)
+ (action (run %{exe:fresh_trace.exe})))
+
+(rule
+ (alias backend-lean)
+ (deps check_fresh_case.py fresh-case.watsup fresh-case-proof.lean case-empty.p4)
+ (action
+  (run python3 %{dep:check_fresh_case.py}
+   --exe %{exe:../../lib/lean-skeleton/main.exe})))
+
+(rule
+ (alias backend-lean)
+ (deps check_fresh_rollback.py fresh-rollback.watsup fresh-rollback-proof.lean)
+ (action
+  (run python3 %{dep:check_fresh_rollback.py}
+   --exe %{exe:../../lib/lean-skeleton/main.exe})))
+
+(rule
+ (alias backend-lean)
+ (deps check_fresh_alpha.py fresh-alpha.watsup fresh-alpha-proof.lean
+  fresh-alpha-extern.watsup fresh-alpha-extern-proof.lean
+  fresh-alpha-alias.watsup fresh-alpha-alias-proof.lean
+  fresh-alpha-text.watsup fresh-alpha-text-proof.lean
+  fresh-alpha-shadow.watsup fresh-alpha-shadow-proof.lean
+  fresh-alpha-unsupported.watsup)
+ (action
+  (run python3 %{dep:check_fresh_alpha.py}
+   --exe %{exe:../../lib/lean-skeleton/main.exe})))
+
 (rule
  (target fresh-interp.actual)
  (deps fresh.watsup)
@@ -233,6 +268,30 @@
    (progn
     (run %{exe:../../lib/lean-skeleton/main.exe} %{dep:extern-model.watsup})
     (cat %{dep:extern-model-proof.lean})))))
+
+(rule
+ (target wfs-composition.lean)
+ (deps relation-wfs.watsup wfs-composition-proof.lean)
+ (action
+  (with-stdout-to wfs-composition.lean
+   (progn
+    (run %{exe:../../lib/lean-skeleton/main.exe} %{dep:relation-wfs.watsup})
+    (cat %{dep:wfs-composition-proof.lean})))))
+
+(rule
+ (alias backend-lean)
+ (deps wfs-composition.lean)
+ (action (run lean wfs-composition.lean)))
+
+(rule
+ (alias backend-lean)
+ (deps check_proof_support.py proof-support-proof.lean
+  wfs-composition-proof.lean relation-wfs.watsup relation-wfs-proof.lean
+  extern-model.watsup ../../lib/lean-skeleton/SpecTecProof.lean)
+ (action
+  (run python3 %{dep:check_proof_support.py}
+   --exe %{exe:../../lib/lean-skeleton/main.exe}
+   --support %{dep:../../lib/lean-skeleton/SpecTecProof.lean})))
 
 (rule
  (alias backend-lean)

@@ -1329,11 +1329,13 @@ type program_constructor = {
   constructor_name : string;
   constructor_parameters : string;
   constructor_arguments : string;
+  constructor_fields : string;
+  constructor_head : string;
   rule_index : string;
 }
 
 let program_constructor name type_parameters equality_parameters print_parameters
-    binders rule_index : program_constructor =
+    binders head rule_index : program_constructor =
   let bound = type_parameters @ List.map fst binders in
   { constructor_name = name;
     constructor_parameters =
@@ -1343,7 +1345,37 @@ let program_constructor name type_parameters equality_parameters print_parameter
       (List.map (fun name -> "(" ^ print_identifier name ^ " := "
           ^ print_identifier name ^ ")") type_parameters
        @ List.map (fun (name, _) -> print_identifier name) binders);
+    constructor_fields = String.concat " "
+      (List.map print_identifier type_parameters
+       @ List.map (fun _ -> "_") (equality_parameters @ print_parameters)
+       @ List.map (fun (name, _) -> print_identifier name) binders);
+    constructor_head = head;
     rule_index }
+
+(* Eliminate each leaf once in the semantics module. Invariants whose predicate
+   is True on all these heads can reuse this theorem without revisiting rules,
+   their side conditions, or their positive and negative premises. *)
+let print_head_property (name : string) (constructors : program_constructor list) : string =
+  let property = print_identifier "head:predicate" in
+  let hypothesis constructor = print_identifier ("head:case:" ^ constructor.constructor_name) in
+  let assumptions = List.map (fun constructor ->
+    " (" ^ hypothesis constructor ^ " : "
+    ^ (if constructor.constructor_parameters = "" then "" else
+         "∀" ^ constructor.constructor_parameters ^ ", ")
+    ^ property ^ " " ^ constructor.constructor_head ^ ")") constructors in
+  let cases = List.map (fun constructor ->
+    "  | " ^ constructor.constructor_name
+    ^ " =>\n"
+    ^ (if constructor.constructor_fields = "" then "" else
+         "    rename_i " ^ constructor.constructor_fields ^ "\n")
+    ^ "    exact " ^ hypothesis constructor
+    ^ (if constructor.constructor_arguments = "" then "" else
+         " " ^ constructor.constructor_arguments)) constructors in
+  "theorem " ^ name ^ ".head_property (" ^ property ^ " : Atom → Prop)\n"
+  ^ String.concat "\n" assumptions
+  ^ "\n {«head:rule» : SpecTecWFS.Rule Atom} ( «head:member» : "
+  ^ name ^ " «head:rule») : " ^ property ^ " «head:rule».head := by\n"
+  ^ "  cases «head:member» with\n" ^ String.concat "\n" cases
 
 (* All levels are uniform: cases_in_program peels one wrapper per level,
    then leaves the individual rule cases for the caller's next tactic. *)
@@ -1370,6 +1402,7 @@ let print_program_membership (constructors : program_constructor list) : string 
         " <;> (rename_i programPart; cases programPart)")) ^ "))" in
   if List.length constructors <= width then
     declare "InProgram" (List.map (print_constructor "InProgram") constructors)
+    ^ "\n\n" ^ print_head_property "InProgram" constructors
     ^ "\n\n" ^ tactic 0
   else
   let leaves = List.mapi (fun i members ->
@@ -1378,7 +1411,8 @@ let print_program_membership (constructors : program_constructor list) : string 
       name ^ "." ^ constructor.constructor_name
       ^ (if constructor.constructor_arguments = "" then ""
          else " " ^ constructor.constructor_arguments)) members in
-    declare name (List.map (print_constructor name) members), (name, aliases))
+    (declare name (List.map (print_constructor name) members)
+     ^ "\n\n" ^ print_head_property name members), (name, aliases))
     (chunks constructors) in
   let wrap parent children =
     List.mapi (fun i (name, aliases) ->
@@ -1428,6 +1462,10 @@ let print_dispatch_constructor (relations : L.declaration list) (index : int)
             argument_types in
           program_constructor (program_rule_name index)
             type_parameters equality_parameters print_parameters binders
+            ("(" ^ explicit_atom "relation_call" ^ " _ _ "
+             ^ "(_root_.SpecTecRelationRef.named \"" ^ escape_string name ^ "\") "
+             ^ print_call_tuple type_parameters inputs ^ " "
+             ^ print_term type_parameters result ^ ")")
             ("{ head := (" ^ explicit_atom "relation_call" ^ " _ _ "
              ^ "(_root_.SpecTecRelationRef.named \"" ^ escape_string name ^ "\") "
              ^ print_call_tuple type_parameters inputs ^ " "
@@ -1487,6 +1525,7 @@ let print_in_program_constructor (relations : L.declaration list) (index : int)
       let bound : string list = type_parameters @ List.map fst rule.binders in
       program_constructor (program_rule_name index)
         type_parameters equality_parameters print_parameters rule.binders
+        (print_atom relations bound rule.conclusion)
         (print_wfs_rule relations bound rule)
   | _ -> invalid_arg "expected relation"
 
@@ -1624,6 +1663,8 @@ let print_wfs_program (relations : L.declaration list) : string =
           @ [{ constructor_name = "external_call";
                constructor_parameters = " {α β : Type} (f : α → β → Prop) (input : α) (output : β)";
                constructor_arguments = "(α := α) (β := β) f input output";
+               constructor_fields = "α β f input output";
+               constructor_head = "(" ^ explicit_atom "relation_call" ^ " α β (_root_.SpecTecRelationRef.external f) input output)";
                rule_index = "{ head := (" ^ explicit_atom "relation_call" ^ " α β (_root_.SpecTecRelationRef.external f) input output), positive := [], negative := [], side := f input output }" }]) ]
     @ List.map (print_wfs_relation relations) relations
     @ List.concat_map
@@ -1654,7 +1695,7 @@ let print_wfs_program (relations : L.declaration list) : string =
           theorems @ declaration_notation relation)
         relations)
 
-let print (program : L.program) : string =
+let print ?(fresh_rollback = false) (program : L.program) : string =
   let relations : L.declaration list = List.concat_map relations_in_group program in
   let rec declarations_in_group (group : L.declaration_group) : L.declaration list =
     match group with
@@ -1752,4 +1793,5 @@ let print (program : L.program) : string =
   ^ String.concat "\n\n" (List.map print_group other_groups)
   ^ (if p4_externs then "\n\n" ^ Extern_model.p4_source else "")
   ^ (if relations = [] then "" else "\n\n" ^ print_wfs_program relations)
+  ^ (if fresh_rollback then "\n\n" ^ Fresh_alpha.render program else "")
   ^ "\n\nend SpecTec"

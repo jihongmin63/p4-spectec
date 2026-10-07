@@ -2294,7 +2294,8 @@ module Fresh_state = struct
   let nat = L.BuiltinType ("Nat", [])
   let zero = L.Number ("0", nat)
   let state_name name = name ^ ":state"
-  (* fail:i summarizes failure of clauses 0 through i, including their effects. *)
+  (* fail:i summarizes failure of clauses 0 through i. Exact mode includes their
+     effects; rollback mode records only the counter at the call's entry. *)
   let fail_name name index = name ^ ":fail:" ^ string_of_int index
   let all_fail_name name = name ^ ":fail"
   let match_name name index = name ^ ":match:" ^ string_of_int index
@@ -2324,9 +2325,9 @@ module Fresh_state = struct
     close (StringSet.singleton "$fresh_typeId")
 
   (* The pure WFS encoding implements otherwise with regular/enabled wrappers.
-     Stateful evaluation must try the source clauses once, in order, carrying
-     the failed guards' final counter into the fallback. Flatten those wrappers
-     before lowering so the ordinary failure chain does exactly that. *)
+     Stateful evaluation must try the source clauses once, in order. Flatten
+     those wrappers before lowering so the ordinary failure chain implements
+     source priority with the selected counter policy. *)
   let inline_otherwise names declarations =
     let relations = List.fold_left (fun map located ->
       match located.L.declaration with
@@ -2380,7 +2381,7 @@ module Fresh_state = struct
     | Some indices -> project indices arguments
     | None -> split_result arguments
 
-  let sequence (active_names : StringSet.t) (positions : int list StringMap.t)
+  let sequence ~rollback (active_names : StringSet.t) (positions : int list StringMap.t)
       (premises : L.premise list)
       (start : int) : L.premise list * (string * L.type_ref) list * int =
     List.fold_left (fun (translated, binders, index) premise ->
@@ -2397,9 +2398,10 @@ module Fresh_state = struct
           let next = index + 1 in
           let failure = { application with target = L.Global (all_fail_name name);
             arguments = before :: inputs_for positions name application.arguments
-                        @ [ variable (counter next) ] } in
+                        @ (if rollback then [] else [ variable (counter next) ]) } in
           (translated @ [ L.Holds failure ],
-           binders @ [ counter next, nat ], next)
+           binders @ (if rollback then [] else [ counter next, nat ]),
+           if rollback then index else next)
       | _ -> translated @ [ premise ], binders, index)
       ([], [], start) premises
 
@@ -2435,7 +2437,7 @@ module Fresh_state = struct
       (Some StringSet.empty) terms
     |> Option.is_some
 
-  let lower_relation (names : StringSet.t) (positions : int list StringMap.t)
+  let lower_relation ~rollback (names : StringSet.t) (positions : int list StringMap.t)
       (located : L.located_declaration) :
       L.located_declaration list =
     match located.declaration with
@@ -2448,7 +2450,9 @@ module Fresh_state = struct
         let original = L.Relation relation in
         let state_type = nat :: argument_types @ [ nat ] in
         let input_types = inputs_for positions name argument_types in
-        let fail_type = nat :: input_types @ [ nat ] in
+        let fail_type = nat :: input_types @ (if rollback then [] else [ nat ]) in
+        let failure_arguments before inputs after =
+          before :: inputs @ (if rollback then [] else [ after ]) in
         let state_rules, helpers =
           if name = "$fresh_typeId" then [ fresh_rule () ], []
           else
@@ -2457,12 +2461,13 @@ module Fresh_state = struct
                 if index = 0 then [], [], 0 else
                   let call = { rule.L.conclusion with
                     target = L.Global (fail_name name (index - 1));
-                    arguments = initial
-                      :: inputs_for positions name rule.conclusion.arguments
-                      @ [ variable (counter 1) ] } in
-                  [ L.Holds call ], [ counter 1, nat ], 1
+                    arguments = failure_arguments initial
+                      (inputs_for positions name rule.conclusion.arguments)
+                      (variable (counter 1)) } in
+                  [ L.Holds call ], (if rollback then [] else [ counter 1, nat ]),
+                  if rollback then 0 else 1
               in
-              let premises, binders, finish = sequence names positions rule.premises current in
+              let premises, binders, finish = sequence ~rollback names positions rule.premises current in
               let success = { rule with
                 binders = (counter 0, nat) :: rule.binders
                           @ previous_binders @ binders;
@@ -2490,7 +2495,7 @@ module Fresh_state = struct
                 catchable = [];
                 conclusion = { rule.conclusion with
                   target = L.Global (fail_name name index);
-                  arguments = initial :: generic @ [ initial ] } } in
+                  arguments = failure_arguments initial generic initial } } in
               let failed_guards =
                 List.filter_map (fun (position, premise) ->
                   let prefix = List.filteri (fun i _ -> i < position) rule.premises in
@@ -2503,7 +2508,7 @@ module Fresh_state = struct
                       (Traversal.premise_terms premise)
                     |> List.for_all (fun (name, _) -> List.mem name bound_names)
                   in
-                  let prefix, prefix_binders, at = sequence names positions prefix 0 in
+                  let prefix, prefix_binders, at = sequence ~rollback names positions prefix 0 in
                   let before = variable (counter at) in
                   let call_match (application : L.application) =
                     let fixed = List.filter
@@ -2557,8 +2562,9 @@ module Fresh_state = struct
                         let next = at + 1 in
                         Some (L.Holds { application with
                           target = L.Global (all_fail_name target);
-                          arguments = before :: inputs @ [ variable (counter next) ] },
-                          variable (counter next), [ counter next, nat ], [])
+                          arguments = failure_arguments before inputs (variable (counter next)) },
+                          (if rollback then before else variable (counter next)),
+                          (if rollback then [] else [ counter next, nat ]), [])
                     | L.Holds application
                       when List.mem position rule.catchable && fully_bound ->
                         Some (L.NotHolds (application, located.at), before, [], [])
@@ -2570,7 +2576,8 @@ module Fresh_state = struct
                         let next = at + 1 in
                         Some (L.Holds (state_call target before
                           application.arguments (variable (counter next)) application),
-                          variable (counter next), [ counter next, nat ], [])
+                          (if rollback then before else variable (counter next)),
+                          [ counter next, nat ], [])
                     | L.NotHolds (application, _) when fully_bound ->
                         Some (L.Holds application, before, [], [])
                     | L.Holds _ | L.NotExists _ | L.NotHolds _ -> None
@@ -2592,13 +2599,18 @@ module Fresh_state = struct
                       premises = prefix @ [ negative ]; catchable = [];
                       conclusion = { rule.conclusion with
                         target = L.Global (fail_name name index);
-                        arguments = initial :: input_terms @ [ after ] } },
+                        arguments = failure_arguments initial input_terms after } },
                     generated) failure)
                   (List.mapi (fun i premise -> i, premise) rule.premises) in
               let call_helpers = List.concat_map snd failed_guards in
               let failed_guards = List.map fst failed_guards in
               let failures = failed_guards @ (if needs_match then [ mismatch ] else []) in
-              let failures = if index = 0 then failures else
+              let failures = if index = 0 then failures else if rollback then
+                List.map (fun (failure : L.rule) ->
+                  let previous = { failure.conclusion with
+                    target = L.Global (fail_name name (index - 1)) } in
+                  { failure with premises = L.Holds previous :: failure.premises }) failures
+                else
                 List.map (fun (failure : L.rule) ->
                   let entry = variable "fresh:entry" in
                   let inputs = List.tl (split_result failure.conclusion.arguments) in
@@ -2624,9 +2636,9 @@ module Fresh_state = struct
               type_arguments = List.map (fun n -> L.TypeParameter n)
                 relation.type_parameters;
               instance_arguments = []; print_instance_arguments = [];
-              arguments = initial :: inputs @ [ variable (counter 1) ] } ] in
+              arguments = failure_arguments initial inputs (variable (counter 1)) } ] in
           let rule = { L.name = "all_failed";
-            binders = [ counter 0, nat; counter 1, nat ]
+            binders = [ counter 0, nat ] @ (if rollback then [] else [ counter 1, nat ])
               @ List.mapi (fun i typ -> "fresh:input:" ^ string_of_int i, typ)
                   input_types;
             premises; catchable = [];
@@ -2634,7 +2646,7 @@ module Fresh_state = struct
               type_arguments = List.map (fun n -> L.TypeParameter n)
                 relation.type_parameters;
               instance_arguments = []; print_instance_arguments = [];
-              arguments = initial :: inputs @ [ variable (counter 1) ] } } in
+              arguments = failure_arguments initial inputs (variable (counter 1)) } } in
           make_relation original (all_fail_name name) fail_type
             (if rules = [] then [] else [ rule ])
         in
@@ -2658,7 +2670,7 @@ module Fresh_state = struct
           (state_relation :: helpers @ [ all_fail; wrapper ])
     | _ -> [ located ]
 
-  let lower declarations =
+  let lower ?(rollback = false) declarations =
     if not (List.exists (function
       | { L.declaration = L.Relation { name = "$fresh_typeId"; _ }; _ } -> true
       | _ -> false) declarations)
@@ -2687,7 +2699,7 @@ module Fresh_state = struct
         | L.Relation { name; input_positions = Some indices; _ } ->
             StringMap.add name indices positions
         | _ -> positions) StringMap.empty declarations in
-      List.concat_map (lower_relation names positions) declarations
+      List.concat_map (lower_relation ~rollback names positions) declarations
 end
 
 let required_type_parameters (parameters : string list)
@@ -2950,7 +2962,8 @@ let generated_declarations (env : env) (program : S.spec)
   let terms : L.term list = collected_terms declarations in
   coercion_declarations env program terms @ membership_declarations program terms
 
-let translate (program : S.spec) : (L.located_declaration list, Diagnostic.t) result =
+let translate ?(fresh_rollback = false) (program : S.spec) :
+    (L.located_declaration list, Diagnostic.t) result =
   let env : env = build_env program in
   try
     let declarations : L.located_declaration list =
@@ -2964,13 +2977,13 @@ let translate (program : S.spec) : (L.located_declaration list, Diagnostic.t) re
     in
     let declarations : L.located_declaration list =
       declarations @ generated_declarations env program declarations
-      |> Fresh_state.lower
+      |> Fresh_state.lower ~rollback:fresh_rollback
       |> Relation_optimizer.prune_helpers
     in
     Ok (equality_parameters declarations)
   with Unsupported_il diagnostic -> Error diagnostic
 
-let translate_all (program : S.spec) :
+let translate_all ?(fresh_rollback = false) (program : S.spec) :
     L.located_declaration list * Diagnostic.t list =
   let env : env = build_env program in
   let (declarations, diagnostics) :
@@ -2990,7 +3003,7 @@ let translate_all (program : S.spec) :
   let declarations : L.located_declaration list = List.rev declarations in
   let declarations : L.located_declaration list =
     declarations @ generated_declarations env program declarations
-    |> Fresh_state.lower
+    |> Fresh_state.lower ~rollback:fresh_rollback
     |> Relation_optimizer.prune_helpers
     |> equality_parameters
   in

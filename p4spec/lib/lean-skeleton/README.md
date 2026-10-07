@@ -22,6 +22,47 @@ Translation stops at the first translation or ordering error. `--keep-going` ret
 
 Each source rule contributes a member of the shared `InProgram` relation. Positive relation premises become positive atoms, explicit negative premises become negative atoms, and pure propositions become side conditions. The shared WFS backend interprets the entire program; a public relation is `SpecTecWFS.Holds InProgram` of its atom. Its rule theorems are proved from `InProgram` constructors and `SpecTecWFS.Holds.rule`.
 
+Each leaf of the bounded `InProgram` tree has a shared `head_property` theorem.
+The optional `SpecTecProof.lean` module provides `spec_invariant`: it builds
+closure lemmas for the tree and reuses `head_property` when the invariant
+reduces to `True` on every head of a leaf. Other leaves use the supplied
+`default` tactic; explicit leaf handlers take precedence. `using known_sound`
+makes a previously proved invariant available on positive premises. Negative
+premises retain `SpecTecWFS.Fails`, and the command rejects extra axioms.
+Generation size checks include these common proof lemmas.
+
+The default fresh-ID model reproduces the interpreter's counter, including
+allocations in failed clauses. `--fresh-rollback` selects a proof abstraction:
+successful calls thread an entry and exit counter, but failure predicates have
+only an entry counter. Every alternative starts at the same entry counter, so
+failed allocations do not connect the state of different clauses. Successful
+sequential and nested calls still receive distinct IDs.
+
+This option also generates shared `FreshRename_*` definitions and the
+`FreshAlphaIR` relation for types reachable from `p4programIR`. One bijective
+renaming acts on all generated names; constructors, numbers, list order,
+ordinary strings, extern values and function references are preserved.
+Repeated references remain consistent and different IDs cannot be collapsed.
+The generated helpers and their proofs are part of the shared proof cost.
+
+For accepted `--case` or `--manifest` entries, rollback mode replays the exact
+interpreter and checks the supplied answer against its canonical `--dump-output`
+term. Actual allocation identities determine which output strings may be
+renamed; the `FRESH__` prefix alone is never sufficient. All input strings and
+ordinary output strings are fixed, including ordinary strings whose spelling
+matches an allocated ID. Text derived by concatenation or other string
+operations is conservatively fixed. Cases require an accepted output and
+uniqueness up to `FreshAlphaIR`; rejected cases still require nonexistence.
+The interpreter is reused across cases, with its counter reset for each one.
+
+This is an explicit abstraction, rather than an equivalence theorem for every
+SpecTec program. Fresh spelling can affect comparisons, capture checks,
+string-derived identifiers and ordered sets; rollback can therefore change
+observable behavior in such programs. Keep the default exact model for those
+proofs. `--obligations-only --fresh-rollback` requires importing semantics
+generated with the same flag. Oracle capture flags use the exact interpreter
+and cannot be combined with `--fresh-rollback`.
+
 For a function with `otherwise`, translation creates `regular inputs result`, `enabled inputs`, and the public result atom. Any regular result establishes `enabled`, even when the result is unknown. The fallback rule requires `SpecTecWFS.Fails InProgram (enabled inputs)`, so an undetermined enabled atom does not select the fallback. Function arguments are `SpecTecRelationRef` values; their applications use `Atom.relation_call`, and named functions have dispatch rules in the same program.
 
 The `$union_set`, `$unions_set`, `$diff_set`, and `$intersect_set` builtins

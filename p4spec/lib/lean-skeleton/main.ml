@@ -5,6 +5,7 @@ type options = {
   includes_p4 : string list;
   cases : (Case_obligation.expectation * string * string option) list;
   keep_going : bool;
+  fresh_rollback : bool;
   obligations_only : bool;
   dump_output : string option;
   check_rejection : string option;
@@ -13,7 +14,7 @@ type options = {
 }
 
 let usage =
-  "Usage: lean-skeleton [--keep-going] [--obligations-only] \
+  "Usage: lean-skeleton [--keep-going] [--fresh-rollback] [--obligations-only] \
    [--case P4 EXPECTED | --reject-case P4 | --manifest TSV]... \
    [--case-range START COUNT] \
    [--dump-output P4 | --check-rejection P4 | --batch-cases PATHS] \
@@ -62,6 +63,7 @@ let parse_options arguments =
         includes_p4 = List.rev options.includes_p4;
         cases = List.rev options.cases }
     | "--keep-going" :: rest -> loop { options with keep_going = true } rest
+    | "--fresh-rollback" :: rest -> loop { options with fresh_rollback = true } rest
     | "--obligations-only" :: rest ->
         loop { options with obligations_only = true } rest
     | "--case" :: path :: expected :: rest ->
@@ -94,7 +96,7 @@ let parse_options arguments =
         loop { options with paths_spec = path :: options.paths_spec } rest
   in
   loop { paths_spec = []; includes_p4 = []; cases = [];
-         keep_going = false; obligations_only = false; dump_output = None;
+         keep_going = false; fresh_rollback = false; obligations_only = false; dump_output = None;
          check_rejection = None; batch_cases = None; case_range = None } arguments
 
 let read_expected path =
@@ -138,9 +140,10 @@ let rec parse_cases includes_p4 = function
                 Error (Diagnostic.error ~source:"oracle" Util.Source.no_region message))
       in
       let* others = parse_cases includes_p4 rest in
-      Ok ({ Case_obligation.source; expectation; expected; value } :: others)
+      Ok ({ Case_obligation.source; expectation; expected; value;
+            fresh_context = None } :: others)
 
-let run_program paths_spec includes_p4 path =
+let program_oracle paths_spec includes_p4 =
   let open Runtime.Sim.Signature in
   let diagnostic message =
     Diagnostic.error ~source:"oracle" Util.Source.no_region message in
@@ -150,7 +153,68 @@ let run_program paths_spec includes_p4 path =
   let* spec_sim = lift (P4spectec.spec_of_mode SL_mode paths_spec) in
   let* simulator = lift (P4spectec.build_sim ~det:true spec_sim) in
   let (module Simulator : SIM) = simulator in
-  Ok (Simulator.Interp.eval_program "Program_ok" includes_p4 path)
+  Ok (fun path ->
+    Interface.P4.Builtin_P4.init ();
+    Simulator.Interp.eval_program "Program_ok" includes_p4 path)
+
+let run_program paths_spec includes_p4 path =
+  let* evaluate = program_oracle paths_spec includes_p4 in
+  Ok (evaluate path)
+
+let rec text_values (value : Runtime.Value.t) =
+  let recurse values = List.concat_map text_values values in
+  match value.it with
+  | TextV name -> [value.note.vid, name]
+  | StructV fields -> recurse (List.map snd fields)
+  | CaseV notation -> recurse (Domain.Mixfix.args notation)
+  | TupleV values | ListV values -> recurse values
+  | OptV (Some value) -> text_values value
+  | BoolV _ | NumV _ | OptV None | FuncV _ | ExternV _ -> []
+
+let fresh_context env evaluate (case : Case_obligation.case) =
+  let open Runtime.Sim.Signature in
+  let diagnostic message =
+    Diagnostic.error ~source:"oracle" Util.Source.no_region message in
+  let outcome, allocated = Interface.P4.with_fresh_allocations (fun () ->
+    evaluate case.source) in
+  match outcome with
+  | Pass [value] ->
+      (try
+        let observed = Case_obligation.translate_value env
+          (Ast.Lean.Name "p4programIR") value |> Printer.print_term [] in
+        if case.expected <> Some observed then
+          Error (diagnostic ("expected output differs from the exact interpreter for "
+            ^ case.source ^ "; capture it with --dump-output before --fresh-rollback"))
+        else
+          let allocation_ids = Hashtbl.create (List.length allocated) in
+          List.iter (fun (value : Runtime.Value.t) ->
+            Hashtbl.replace allocation_ids value.note.vid ()) allocated;
+          let allocated_names = List.concat_map text_values allocated |> List.map snd in
+          let ordinary_output = text_values value |> List.filter_map (fun (id, name) ->
+            if Hashtbl.mem allocation_ids id then None else Some name) in
+          let protected = List.map snd (text_values case.value) @ ordinary_output
+            |> List.sort_uniq String.compare in
+          Ok { case with fresh_context = Some (allocated_names, protected) }
+      with Translator.Unsupported_il diagnostic -> Error diagnostic)
+  | Pass values -> Error (diagnostic (Printf.sprintf
+      "Program_ok returned %d outputs; expected one" (List.length values)))
+  | Fail (`Syntax diagnostic) -> Error diagnostic
+  | Fail (`Runtime failure) -> Error (diagnostic_of_failure failure)
+
+let enrich_fresh_cases paths_spec spec_il includes_p4 cases =
+  if not (List.exists (fun (case : Case_obligation.case) ->
+    case.expectation = Accept) cases) then Ok cases else
+  let* evaluate = program_oracle paths_spec includes_p4 in
+  let env = Translator.build_env spec_il in
+  let rec enrich = function
+    | [] -> Ok []
+    | (case : Case_obligation.case) :: rest ->
+        let* case = match case.expectation with
+          | Accept -> fresh_context env evaluate case
+          | Reject | AbortReject -> Ok case in
+        let* rest = enrich rest in
+        Ok (case :: rest)
+  in enrich cases
 
 let oracle_output paths_spec spec_il includes_p4 path =
   let open Runtime.Sim.Signature in
@@ -262,7 +326,7 @@ let () =
   | _ -> ());
   if (options.dump_output <> None || options.check_rejection <> None ||
       options.batch_cases <> None) &&
-     (options.cases <> [] || options.obligations_only || options.keep_going ||
+     (options.cases <> [] || options.obligations_only || options.keep_going || options.fresh_rollback ||
       options.case_range <> None ||
       List.length (List.filter Option.is_some
         [options.dump_output; options.check_rejection; options.batch_cases]) > 1) then (
@@ -293,6 +357,9 @@ let () =
               start
         in
         let* cases = parse_cases options.includes_p4 selected in
+        let* cases = if options.fresh_rollback then
+          enrich_fresh_cases options.paths_spec spec_il options.includes_p4 cases
+          else Ok cases in
         let* obligations =
           try Ok (if cases = [] then "" else Case_obligation.render ~start spec_il cases)
           with Translator.Unsupported_il diagnostic -> Error diagnostic
@@ -300,12 +367,12 @@ let () =
         if options.obligations_only then Ok (obligations, [])
         else if options.keep_going then
           let (lean_code, diagnostics) : string * Diagnostic.t list =
-            Pipeline.transpile_all spec_il
+            Pipeline.transpile_all ~fresh_rollback:options.fresh_rollback spec_il
           in
           Ok ((if obligations = "" then lean_code else lean_code ^ "\n\n" ^ obligations),
               diagnostics)
         else
-          let* lean_code = Pipeline.transpile spec_il in
+          let* lean_code = Pipeline.transpile ~fresh_rollback:options.fresh_rollback spec_il in
           Ok ((if obligations = "" then lean_code else lean_code ^ "\n\n" ^ obligations),
               [])
         | _ -> assert false)
