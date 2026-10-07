@@ -8,6 +8,23 @@
  (modules builtin_oracle)
  (libraries builtin runtime util domain lang bignum.bigint))
 
+(executable
+ (name fresh_interp)
+ (modules fresh_interp)
+ (libraries p4spectec runtime interface diagnostic bignum.bigint))
+
+(rule
+ (target fresh-interp.actual)
+ (deps fresh.watsup)
+ (action
+  (with-stdout-to fresh-interp.actual
+   (run %{exe:fresh_interp.exe} %{dep:fresh.watsup}))))
+
+(rule
+ (alias backend-lean)
+ (deps fresh-interp.actual)
+ (action (diff fresh-interp.expected fresh-interp.actual)))
+
 (rule
  (target builtin_oracle.actual)
  (action
@@ -91,6 +108,20 @@
  (alias backend-lean)
  (deps table.lean)
  (action (run lean table.lean)))
+
+(rule
+ (target fresh.lean)
+ (deps fresh.watsup fresh-proof.lean)
+ (action
+  (with-stdout-to fresh.lean
+   (progn
+    (run %{exe:../../lib/lean-skeleton/main.exe} %{dep:fresh.watsup})
+    (cat %{dep:fresh-proof.lean})))))
+
+(rule
+ (alias backend-lean)
+ (deps fresh.lean)
+ (action (run lean fresh.lean)))
 
 (rule
  (target update.lean)

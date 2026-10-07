@@ -1,0 +1,12 @@
+once=FRESH__0
+twice=FRESH__0,FRESH__1
+twice_via_function=FRESH__0,FRESH__1
+ids2=FRESH__0,FRESH__1
+after_failed=FRESH__1
+after_rule_failure=FRESH__1
+after_output_failure=FRESH__1
+new_program=FRESH__0
+det_ids2=FRESH__0,FRESH__1
+det_after_failed=FRESH__1
+det_after_rule_failure=FRESH__1
+det_after_output_failure=FRESH__1

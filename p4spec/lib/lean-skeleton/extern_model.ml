@@ -102,10 +102,12 @@ let relation (name : string) (argument_types : L.type_ref list)
     { target = L.Global name; type_arguments = [];
       instance_arguments = []; print_instance_arguments = []; arguments }
   in
-  let rule : L.rule = { name = "allowed"; binders; premises; conclusion } in
+  let rule : L.rule = { name = "allowed"; binders; premises;
+    catchable = []; conclusion } in
   L.Relation
     { name; type_parameters = []; equality_parameters = [];
-      print_parameters = []; argument_types; rules = [rule]; notation }
+      print_parameters = []; argument_types; input_positions = None;
+      rules = [rule]; notation }
 
 let relation_predicate (name : string) : string option =
   match name with

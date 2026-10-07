@@ -590,7 +590,7 @@ let print_declaration ?(derive_decidable_eq = false)
                fields))
   | Relation
       { name; type_parameters; equality_parameters; print_parameters;
-        argument_types; rules; notation = _ } ->
+        argument_types; rules; notation = _; _ } ->
       let signature : string =
         String.concat " → "
           (List.map (print_type type_parameters) argument_types @ [ "Prop" ])

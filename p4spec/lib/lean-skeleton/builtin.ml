@@ -122,7 +122,7 @@ let translate (builtin_name : string) (type_parameters : string list) :
   | "sub_set", _ -> Error "sub_set without SpecTec set representation"
   | "eq_set", _ -> Error "eq_set without SpecTec set representation"
   | "fresh_typeId", _ ->
-      Error "fresh_typeId because it changes a counter between calls"
+      Error "fresh_typeId must be lowered as a counter-threaded relation"
   | "bits_to_int_signed", _ ->
       Error
         "bits_to_int_signed without the SpecTec bits type and empty-input error"

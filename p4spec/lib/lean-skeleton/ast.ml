@@ -91,6 +91,8 @@ module Lean = struct
     name : string;
     binders : (string * type_ref) list;
     premises : premise list;
+    (* Premise positions whose runtime Unmatch resumes with the next clause. *)
+    catchable : int list;
     conclusion : application;
   }
 
@@ -145,6 +147,8 @@ module Lean = struct
         equality_parameters : string list;
         print_parameters : string list;
         argument_types : type_ref list;
+        (* Source hint(input ...) positions, used by stateful failure rules. *)
+        input_positions : int list option;
         rules : rule list;
         notation : notation_part list option;
       }

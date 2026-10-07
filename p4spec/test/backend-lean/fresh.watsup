@@ -1,0 +1,63 @@
+syntax typeId = text
+
+builtin dec $fresh_typeId() : typeId
+
+var n : nat
+var temp : typeId
+var output : typeId
+
+dec $once() : typeId
+def $once() = $fresh_typeId()
+
+dec $twice() : (typeId, typeId)
+def $twice() = ($fresh_typeId(), $fresh_typeId())
+
+dec $twice_via_function() : (typeId, typeId)
+def $twice_via_function() = ($once(), $once())
+
+dec $fresh_typeIds(nat) : typeId*
+def $fresh_typeIds(0) = eps
+def $fresh_typeIds(n) = $fresh_typeId() :: $fresh_typeIds(n')
+  -- if n =/= 0
+  -- if n' = $(n - 1)
+
+dec $after_failed() : typeId
+def $after_failed() = "unreachable"
+  -- if $fresh_typeId() = "never"
+def $after_failed() = $fresh_typeId()
+
+relation OnlyZero:
+  |- nat
+  hint(input %0)
+
+rule OnlyZero/zero:
+  |- 0
+
+dec $after_rule_failure() : typeId
+def $after_rule_failure() = "unreachable"
+  -- if temp = $fresh_typeId()
+  -- OnlyZero: |- 1
+def $after_rule_failure() = $fresh_typeId()
+
+relation OnlyZeroOutput:
+  |- nat : typeId
+  hint(input %0)
+
+rule OnlyZeroOutput/zero:
+  |- 0 : "zero"
+
+dec $after_output_failure() : typeId
+def $after_output_failure() = "unreachable"
+  -- if temp = $fresh_typeId()
+  -- OnlyZeroOutput: |- 1 : output
+def $after_output_failure() = $fresh_typeId()
+
+syntax p4program = nat
+syntax p4programIR = typeId
+
+relation Program_ok:
+  |- p4program : p4programIR
+  hint(input %0)
+
+rule Program_ok/fresh:
+  |- n : $fresh_typeId()

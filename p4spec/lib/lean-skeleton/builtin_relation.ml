@@ -13,7 +13,8 @@ let names : string list =
     "strip_suffix"; "shl"; "shr"; "shr_arith"; "int_to_bitstr";
     "bitstr_to_int"; "split_text"; "sub_set"; "eq_set";
     "bits_to_int_signed"; "int_to_bits_unsigned"; "int_to_bits_signed";
-    "bitacc"; "bitacc_replace"; "text_to_int"; "print_" ]
+    "bitacc"; "bitacc_replace"; "text_to_int"; "print_";
+    "fresh_typeId" ]
 
 let is_relation (name : string) : bool = List.mem name names
 
@@ -65,6 +66,7 @@ let signature (name : string) (type_parameters : string list) :
   | "bitacc_replace" -> expect [] [ int; int; int; int ] int
   | "text_to_int" -> expect [] [ text ] int
   | "print_" -> expect [ "X" ] [ left ] text
+  | "fresh_typeId" -> expect [] [] (L.Name "typeId")
   | _ -> Error (name ^ " because no relation builtin implementation is known")
 
 let variable (name : string) (typ : L.type_ref) : L.term = L.Variable (name, typ)
@@ -89,14 +91,17 @@ let comparison (operator : L.comparison) (left : L.term) (right : L.term) : L.pr
 let rule (relation : string) (types : L.type_ref list) (name : string)
     (binders : (string * L.type_ref) list) (premises : L.premise list)
     (arguments : L.term list) : L.rule =
-  { name; binders; premises; conclusion = application relation types arguments }
+  { name; binders; premises; catchable = [];
+    conclusion = application relation types arguments }
 
 let relation ?(print_parameters = []) (name : string)
     (type_parameters : string list)
     (argument_types : L.type_ref list) (rules : L.rule list) : L.declaration =
   L.Relation
     { name = "$" ^ name; type_parameters; equality_parameters = [];
-      print_parameters; argument_types; rules; notation = None }
+      print_parameters; argument_types;
+      input_positions = Some (List.init (max 0 (List.length argument_types - 1)) Fun.id);
+      rules; notation = None }
 
 let builtin (name : string) (parameters : L.type_ref list)
     (result : L.type_ref) (body : string) : L.declaration =
@@ -556,4 +561,7 @@ let translate (name : string) (type_parameters : string list)
       | "bitacc_replace" -> Ok (bitacc_replace types)
       | "text_to_int" -> Ok (text_to_int types)
       | "print_" -> Ok (print types)
+      | "fresh_typeId" ->
+          (* Fresh_state lowers this marker to the counter transition. *)
+          Ok [ relation name [] types [] ]
       | _ -> Error (name ^ " because no relation builtin implementation is known"))
