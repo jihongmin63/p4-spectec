@@ -1,0 +1,81 @@
+syntax value = NUM nat | WRAP value
+
+var n : nat
+var v : value
+
+relation Even: |- nat
+  hint(input %0)
+
+rule Even/zero:
+  |- 0
+
+rule Even/step:
+  |- $(n + 2)
+  -- Even: |- n
+
+relation PairEven: |- nat
+  hint(input %0)
+
+rule PairEven/both:
+  |- n
+  -- Even: |- n
+  -- Even: |- n
+
+dec $unwrap(value) : value
+def $unwrap(WRAP v) = $unwrap(v)
+def $unwrap(v) = v
+  -- otherwise
+
+dec $unwrap_step(value) : value
+def $unwrap_step(v) = $unwrap(v)
+
+relation A: |- nat
+  hint(input %0)
+
+relation B: |- nat
+  hint(input %0)
+
+rule A/from_not_B:
+  |- 0
+  -- B:/ |- 0
+
+rule B/from_not_A:
+  |- 0
+  -- A:/ |- 0
+
+dec $uncertain(value) : value
+def $uncertain(NUM 0) = NUM 1
+  -- A: |- 0
+def $uncertain(v) = v
+  -- otherwise
+
+dec $apply_twice(def $step(value) : value, value) : value
+def $apply_twice(def $step, v) = $step($step(v))
+
+dec $via_twice(value) : value
+def $via_twice(v) = $apply_twice(def $unwrap, v)
+
+dec $via_self(value) : value
+def $via_self(NUM 0) = NUM 0
+def $via_self(WRAP v) = $apply_twice(def $via_self, v)
+
+dec $choose(value) : value
+def $choose(NUM 0) = NUM 1
+def $choose(NUM 2) = NUM 3
+def $choose(v) = v
+  -- otherwise
+
+dec $constant() : value
+def $constant() = NUM 0
+
+dec $call_constant(def $f() : value) : value
+def $call_constant(def $f) = $f()
+
+dec $via_constant() : value
+def $via_constant() = $call_constant(def $constant)
+
+dec $equal_or_false<T>(T, T) : bool
+def $equal_or_false<T>(T_a, T_b) = (T_a = T_b)
+  -- if (T_a = T_b)
+def $equal_or_false<T>(T_a, T_b) = false
+  -- otherwise

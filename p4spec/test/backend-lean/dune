@@ -179,3 +179,17 @@
  (alias backend-lean)
  (deps print.lean)
  (action (run lean print.lean)))
+
+(rule
+ (target relation-wfs.lean)
+ (deps relation-wfs.watsup relation-wfs-proof.lean)
+ (action
+  (with-stdout-to relation-wfs.lean
+   (progn
+    (run %{exe:../../lib/lean-skeleton/main.exe} %{dep:relation-wfs.watsup})
+    (cat %{dep:relation-wfs-proof.lean})))))
+
+(rule
+ (alias backend-lean)
+ (deps relation-wfs.lean)
+ (action (run lean relation-wfs.lean)))

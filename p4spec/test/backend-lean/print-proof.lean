@@ -93,19 +93,27 @@ example :
   exact SpecTec.«$print_».success _ _ rfl
 
 example : ∀ result, ¬ SpecTec.«$print_» (SpecTec.bad.mk 1) result := by
-  intro result h
-  cases h with
-  | success printed =>
-      change (none : Option String) = some result at printed
-      cases printed
+  intro result
+  apply SpecTecWFS.Holds.not_of_rules
+  intro rule inProgram side positive negative
+  cases inProgram <;> simp_all [SpecTecWFS.All]
+  intro hType hValue hResult
+  cases hType
+  cases hValue
+  change (none : Option String) = some _ at side
+  cases side
 
 example : ∀ result,
     ¬ SpecTec.«$print_» (SpecTec.badWrapper.BAD (SpecTec.bad.mk 1)) result := by
-  intro result h
-  cases h with
-  | success printed =>
-      change (none : Option String) = some result at printed
-      cases printed
+  intro result
+  apply SpecTecWFS.Holds.not_of_rules
+  intro rule inProgram side positive negative
+  cases inProgram <;> simp_all [SpecTecWFS.All]
+  intro hType hValue hResult
+  cases hType
+  cases hValue
+  change (none : Option String) = some _ at side
+  cases side
 
 example :
     SpecTecPrint.print? (SpecTec.skipsBad.SKIP (SpecTec.bad.mk 1)) =
