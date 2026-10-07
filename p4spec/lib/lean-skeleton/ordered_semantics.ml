@@ -50,25 +50,24 @@ inductive SelectionPolicy where
 structure EvalRulePlan (Input : Type u₁) (Output : Type u₂)
     (Public : Input → Output → Prop) where
   Witness : Type u₃
-  input : Witness → Input
-  output : Witness → Output
+  accepts : Witness → Input → Output → Prop
   premises : Witness → List Prop
   recoverable : List Nat
-  publicSound : ∀ witness, Prefix (premises witness) →
-    Public (input witness) (output witness)
+  publicSound : ∀ witness input output, accepts witness input output →
+    Prefix (premises witness) → Public input output
 
 def EvalRulePlan.Succeeds {Input : Type u₁} {Output : Type u₂}
     {Public : Input → Output → Prop}
     (plan : EvalRulePlan Input Output Public)
     (evalInput : Input) (evalOutput : Output) : Prop :=
-  ∃ witness, evalInput = plan.input witness ∧
-    evalOutput = plan.output witness ∧ Prefix (plan.premises witness)
+  ∃ witness, plan.accepts witness evalInput evalOutput ∧
+    Prefix (plan.premises witness)
 
 def EvalRulePlan.Fails {Input : Type u₁} {Output : Type u₂}
     {Public : Input → Output → Prop}
     (plan : EvalRulePlan Input Output Public) (evalInput : Input) : Prop :=
   ∀ (evalOutput : Output) (witness : plan.Witness),
-    ¬ (evalInput = plan.input witness ∧ evalOutput = plan.output witness) ∨
+    ¬ plan.accepts witness evalInput evalOutput ∨
       RuleFailure (plan.premises witness) plan.recoverable
 
 theorem EvalRulePlan.Succeeds.sound {Input : Type u₁} {Output : Type u₂}
@@ -76,10 +75,8 @@ theorem EvalRulePlan.Succeeds.sound {Input : Type u₁} {Output : Type u₂}
     {plan : EvalRulePlan Input Output Public} {evalInput : Input}
     {evalOutput : Output} (proof : plan.Succeeds evalInput evalOutput) :
     Public evalInput evalOutput := by
-  rcases proof with ⟨witness, inputEq, outputEq, premises⟩
-  subst evalInput
-  subst evalOutput
-  exact plan.publicSound witness premises
+  rcases proof with ⟨witness, matched, premises⟩
+  exact plan.publicSound witness evalInput evalOutput matched premises
 
 /-- A certificate selecting one rule from a source-ordered plan list. -/
 inductive Selected {Input : Type u₁} {Output : Type u₂}
