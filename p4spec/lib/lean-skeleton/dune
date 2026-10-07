@@ -4,6 +4,7 @@
   ast
   traversal
   fresh_alpha
+  fresh_nominal
   builtin
   builtin_relation
   extern_model

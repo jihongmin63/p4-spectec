@@ -309,7 +309,50 @@ theorem FreshAlphaIR.swap (allocated protectedNames : _root_.List _root_.String)
     FreshNameSwap.allowed allocated protectedNames a b ha hb hpa hpb, equal⟩
 |lean}
 
-let render (program : L.program) : string =
+let nominal_alpha_interface = {lean|
+abbrev FreshSpelling := _root_.SpecTecFresh.FreshId × _root_.String
+
+/-- One identity bijection and one spelling bijection govern the entire
+    output.  Repeated references therefore cannot be renamed independently,
+    while strings not backed by an allocated identity remain fixed. -/
+def FreshNominalAlphaIR
+    (expectedAllocated outputAllocated : _root_.List FreshSpelling)
+    (protectedNames : _root_.List _root_.String)
+    (expected output : p4programIR) : Prop :=
+  ∃ (ids : _root_.SpecTecFresh.AlphaRenaming)
+    (spellings : _root_.String → _root_.String),
+    FreshNameBijective spellings ∧
+    (∀ fresh spelling, (fresh, spelling) ∈ expectedAllocated →
+      ∃ outputSpelling,
+        (ids.toFun fresh, outputSpelling) ∈ outputAllocated ∧
+        spellings spelling = outputSpelling) ∧
+    (∀ spelling,
+      (∀ fresh, (fresh, spelling) ∉ expectedAllocated) ∨
+        spelling ∈ protectedNames → spellings spelling = spelling) ∧
+    FreshEq_p4programIR spellings expected output
+
+theorem FreshNominalAlphaIR.refl
+    (allocated : _root_.List FreshSpelling)
+    (protectedNames : _root_.List _root_.String)
+    (value : p4programIR) :
+    FreshNominalAlphaIR allocated allocated protectedNames value value := by
+  let identityIds : _root_.SpecTecFresh.AlphaRenaming :=
+    { toFun := _root_.id, invFun := _root_.id,
+      leftInv := by intro fresh; rfl,
+      rightInv := by intro fresh; rfl }
+  refine ⟨identityIds, _root_.id, ⟨?_, ?_⟩, ?_, ?_, ?_⟩
+  · intro left right equal
+    exact equal
+  · intro spelling
+    exact ⟨spelling, rfl⟩
+  · intro fresh spelling member
+    exact ⟨spelling, member, rfl⟩
+  · intro spelling fixed
+    rfl
+  · exact FreshRename_p4programIR_id value
+|lean}
+
+let render ?(nominal = false) (program : L.program) : string =
   let types = program |> List.concat_map declarations |> List.filter_map (fun declaration ->
     Option.map (fun name -> name, declaration) (data_name declaration))
     |> List.to_seq |> StringMap.of_seq in
@@ -347,4 +390,7 @@ let render (program : L.program) : string =
         ^ "theorem FreshRename_p4programIR_id (value : p4programIR) : FreshRename_p4programIR _root_.id value = value :=\n  "
         ^ identity_proof shapes "FreshRename_p4programIR" [root, "value"] ^ "\n\n" in
   "section\n\n" ^ (if has_extern root then "variable [SpecTecExternTypes]\n\n" else "")
-  ^ name_helpers ^ "\n\n" ^ functions false ^ functions true ^ root_wrapper ^ alpha_interface ^ "\n\nend\n"
+  ^ name_helpers ^ "\n\n" ^ functions false ^ functions true ^ root_wrapper
+  ^ alpha_interface
+  ^ (if nominal then "\n\n" ^ nominal_alpha_interface else "")
+  ^ "\n\nend\n"

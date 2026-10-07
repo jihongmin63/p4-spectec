@@ -7,6 +7,14 @@ type mode = RelationLocal | FreshExactCounter | FreshRollback
 let print ?(mode = RelationLocal) program =
   let fresh_rollback = mode = FreshRollback in
   try
+    let* () = match mode with
+      | RelationLocal ->
+          Fresh_nominal.audit program
+          |> Result.map_error (fun message ->
+               Diagnostic.error ~source:"lean" Util.Source.no_region
+                 ("fresh compatibility: " ^ message))
+      | FreshExactCounter | FreshRollback -> Ok ()
+    in
     let* analysis = match mode with
       | RelationLocal -> Relation_graph.analyze program |> Result.map Option.some
       | FreshExactCounter | FreshRollback -> Ok None

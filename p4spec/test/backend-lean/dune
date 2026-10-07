@@ -67,6 +67,22 @@
  (deps (alias ordered-eval-test)))
 
 (rule
+ (alias fresh-nominal-test)
+ (deps check_fresh_nominal.py fresh-nominal.watsup fresh-nominal-proof.lean
+  fresh-nominal-unsafe.watsup fresh-alpha.watsup)
+ (action
+  (run python3 %{dep:check_fresh_nominal.py}
+   --exe %{exe:../../lib/lean-skeleton/main.exe}
+   --source %{dep:fresh-nominal.watsup}
+   --proof %{dep:fresh-nominal-proof.lean}
+   --unsafe %{dep:fresh-nominal-unsafe.watsup}
+   --alpha %{dep:fresh-alpha.watsup})))
+
+(alias
+ (name backend-lean)
+ (deps (alias fresh-nominal-test)))
+
+(rule
  (alias backend-lean)
  (deps check_fresh_case.py fresh-case.watsup fresh-case-proof.lean case-empty.p4)
  (action

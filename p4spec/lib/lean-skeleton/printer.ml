@@ -2023,10 +2023,23 @@ let print_eval_application (relations : L.declaration list)
 
 let print_eval_premise (qualified : string) (all_relations : L.declaration list)
     (component_relations : L.declaration list) (members : StringSet.t)
+    (relation_name : string) (rule_index : int) (premise_index : int)
     (bound : string list) (premise : L.premise) : eval_premise =
   let public = print_local_rule_premise qualified component_relations members
     bound premise in
   match premise with
+  | L.Holds ({ target = L.Global "$fresh_typeId"; arguments; _ }) ->
+      let output = match List.rev arguments with
+        | output :: _ -> print_term bound output
+        | [] -> invalid_arg "fresh_typeId call without output" in
+      let site = "({ relation := \"" ^ escape_string relation_name
+        ^ "\", rule := " ^ string_of_int rule_index ^ ", premise := "
+        ^ string_of_int premise_index ^ " } : SpecTecFresh.Site)" in
+      { proposition = "SpecTecFresh.AllocatedAt " ^ site ^ " [] " ^ output;
+        public_evidence = (fun evidence ->
+          "(by apply " ^ print_identifier "$fresh_typeId"
+          ^ ".allocated; exact SpecTecFresh.AllocatedAt.toAllocated "
+          ^ evidence ^ ")") }
   | L.Holds application ->
       (match print_eval_application all_relations members bound application with
       | None -> { proposition = public; public_evidence = Fun.id }
@@ -2052,8 +2065,10 @@ let print_eval_rule_flow (qualified : string) (all_relations : L.declaration lis
         (List.map (fun (binder, _) -> print_identifier binder) rule.binders) in
       let base = name ^ ":eval:rule:" ^ string_of_int rule_index in
       let premises_name = print_identifier (base ^ ":premises") in
-      let eval_premises = List.map
-        (print_eval_premise qualified all_relations component_relations members bound)
+      let eval_premises = List.mapi
+        (fun premise_index premise ->
+          print_eval_premise qualified all_relations component_relations members
+            name rule_index premise_index bound premise)
         rule.premises in
       let premise_values = List.map (fun premise -> premise.proposition) eval_premises in
       let premise_list = "([" ^ String.concat ", " premise_values ^ "] : List Prop)" in
@@ -2096,17 +2111,23 @@ let print_eval_rule_flow (qualified : string) (all_relations : L.declaration lis
            " (" ^ print_identifier binder ^ " : "
            ^ print_type type_parameters typ ^ ")") rule.binders) in
       let succeeds_name = print_identifier (base ^ ":succeeds") in
+      let eval_input = print_identifier "eval:input" in
+      let eval_output = print_identifier "eval:output" in
       let succeeds = "def " ^ succeeds_name
         ^ print_wfs_parameters type_parameters equality_parameters print_parameters
-        ^ " (input : " ^ input_ref ^ ") (output : " ^ output_ref ^ ") : Prop :=\n  "
-        ^ existential_binders ^ "input = " ^ input_term ^ " ∧ output = "
+        ^ " (" ^ eval_input ^ " : " ^ input_ref ^ ") (" ^ eval_output
+        ^ " : " ^ output_ref ^ ") : Prop :=\n  "
+        ^ existential_binders ^ eval_input ^ " = " ^ input_term ^ " ∧ "
+        ^ eval_output ^ " = "
         ^ output_term ^ " ∧ SpecTecEval.Prefix (" ^ call ^ ")" in
       let failed_name = print_identifier (base ^ ":failed") in
       let failed = "def " ^ failed_name
         ^ print_wfs_parameters type_parameters equality_parameters print_parameters
-        ^ " (input : " ^ input_ref ^ ") : Prop :=\n  ∀ (output : " ^ output_ref
-        ^ ")" ^ universal_binders ^ ",\n    ¬ (input = " ^ input_term
-        ^ " ∧ output = " ^ output_term ^ ") ∨\n      SpecTecEval.RuleFailure ("
+        ^ " (" ^ eval_input ^ " : " ^ input_ref ^ ") : Prop :=\n  ∀ ("
+        ^ eval_output ^ " : " ^ output_ref
+        ^ ")" ^ universal_binders ^ ",\n    ¬ (" ^ eval_input ^ " = " ^ input_term
+        ^ " ∧ " ^ eval_output ^ " = " ^ output_term
+        ^ ") ∨\n      SpecTecEval.RuleFailure ("
         ^ call ^ ") " ^ recoverable_name in
       let sound_name = print_identifier (base ^ ":sound") in
       let witness_names = List.mapi
@@ -2186,6 +2207,19 @@ let print_ordered_evaluator (qualified : string) (all_relations : L.declaration 
         ^ " : " ^ input_ref ^ " → " ^ output_ref ^ " → Prop\n"
         ^ "  | " ^ input_pattern ^ ", " ^ output_pattern ^ " => "
         ^ print_application (type_parameters @ all_names) application in
+      let fresh_sites = rules |> List.mapi (fun rule_index (rule : L.rule) ->
+        rule.premises |> List.mapi (fun premise_index premise ->
+          Traversal.premise_applications premise
+          |> List.filter_map (fun application ->
+               match application.L.target with
+               | L.Global "$fresh_typeId" ->
+                   Some ("{ relation := \"" ^ escape_string name
+                     ^ "\", rule := " ^ string_of_int rule_index
+                     ^ ", premise := " ^ string_of_int premise_index ^ " }")
+               | _ -> None)) |> List.concat) |> List.concat in
+      let fresh_sites_declaration =
+        "def " ^ print_identifier name ^ ".freshSites : List SpecTecFresh.Site := ["
+        ^ String.concat ", " fresh_sites ^ "]" in
       let flows = List.mapi (fun index rule ->
         print_eval_rule_flow qualified all_relations component_relations members
           input_ref output_ref positions declaration index rule) rules in
@@ -2275,7 +2309,7 @@ let print_ordered_evaluator (qualified : string) (all_relations : L.declaration 
         ^ print_identifier name ^ ".eval 0 input (.timeout) :=\n  "
         ^ "SpecTecEval.Evaluation.timeout input" in
       String.concat "\n\n"
-        ([ input_alias; output_alias; succeeds ]
+        ([ input_alias; output_alias; succeeds; fresh_sites_declaration ]
          @ List.map (fun flow -> flow.declarations) flows
          @ [ all_failed; selected; selected_sound; undetermined; eval;
              success_sound; failure_sound; timeout ])
@@ -2509,6 +2543,7 @@ let print ?(fresh_rollback = false) ?(relation_local = false) ?analysis
   ^ (if extern_types then Extern_model.types_source ^ "\n\n" else "")
   ^ (if relations = [] then "" else Wfs_backend.source ^ "\n\n"
      ^ if relation_local then Ordered_semantics.source ^ "\n\n" else "")
+  ^ (if relation_local then Fresh_nominal.source ^ "\n\n" else "")
   ^ "namespace SpecTec\n\n"
   ^ (if extern_types && not relation_local then
        "variable [SpecTecExternTypes]\n\n" else "")
@@ -2527,5 +2562,6 @@ let print ?(fresh_rollback = false) ?(relation_local = false) ?analysis
            ~model_relations:local_model_relations
            (Option.get analysis) relations
        else print_wfs_program relations)
-  ^ (if fresh_rollback then "\n\n" ^ Fresh_alpha.render program else "")
+  ^ (if relation_local || fresh_rollback then
+       "\n\n" ^ Fresh_alpha.render ~nominal:relation_local program else "")
   ^ "\n\nend SpecTec"

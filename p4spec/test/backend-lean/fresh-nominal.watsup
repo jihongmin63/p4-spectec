@@ -1,0 +1,28 @@
+syntax typeId = text
+builtin dec $fresh_typeId() : typeId
+
+var n : nat
+var first : typeId
+var second : typeId
+
+dec $nominal_once() : typeId
+def $nominal_once() = $fresh_typeId()
+
+dec $nominal_pair() : (typeId, typeId)
+def $nominal_pair() = ($fresh_typeId(), $fresh_typeId())
+
+dec $nominal_after_failure() : typeId
+def $nominal_after_failure() = "unreachable"
+  -- if first = $fresh_typeId()
+  -- if first = "never"
+def $nominal_after_failure() = $fresh_typeId()
+
+dec $nominal_recurse(nat) : typeId*
+def $nominal_recurse(0) = eps
+def $nominal_recurse(n) = $fresh_typeId() :: $nominal_recurse(n')
+  -- if n =/= 0
+  -- if n' = $(n - 1)
+
+dec $nominal_repeat() : (typeId, typeId)
+def $nominal_repeat() = (first, first)
+  -- if first = $fresh_typeId()

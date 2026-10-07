@@ -104,6 +104,17 @@ let relation ?(print_parameters = []) (name : string)
       selection_policy = L.Nondeterministic;
       rules; notation = None }
 
+let fresh_type_id (types : L.type_ref list) : L.declaration =
+  match List.rev types with
+  | result :: _ ->
+      let output = variable "fresh:output" result in
+      relation "fresh_typeId" [] types
+        [ rule "fresh_typeId" [] "allocated" [ "fresh:output", result ]
+            [ L.Prop (L.Predicate
+                (L.Native ("SpecTecFresh.Allocated", [ output ]))) ]
+            [ output ] ]
+  | [] -> invalid_arg "fresh_typeId has no output type"
+
 let builtin (name : string) (parameters : L.type_ref list)
     (result : L.type_ref) (body : string) : L.declaration =
   L.Builtin
@@ -563,6 +574,7 @@ let translate (name : string) (type_parameters : string list)
       | "text_to_int" -> Ok (text_to_int types)
       | "print_" -> Ok (print types)
       | "fresh_typeId" ->
-          (* Fresh_state lowers this marker to the counter transition. *)
-          Ok [ relation name [] types [] ]
+          (* Legacy Fresh_state replaces this marker rule.  The relation-local
+             backend keeps the nominal allocation proposition. *)
+          Ok [ fresh_type_id types ]
       | _ -> Error (name ^ " because no relation builtin implementation is known"))
