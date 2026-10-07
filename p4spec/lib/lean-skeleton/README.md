@@ -17,13 +17,38 @@ The executable translates elaborated SpecTec IL into Lean source. Its path is:
 - `printer.ml` serializes declarations and terms. By default it emits a private `Atom` and `InProgram` for each dependency SCC, direct public `Prop` judgements, and relation-local rule introduction theorems. Calls to earlier SCCs are side judgements; only same-SCC calls remain WFS atoms. `wfs_backend.ml` contains the shared Lean `Rule`, `Program`, well-founded semantics, and checked program-equivalence lemmas. `identifier.ml` escapes names for Lean syntax.
 - `main.ml` owns command-line behavior; `pipeline.ml` owns the translation-to-printing flow.
 
+`--emit-modules DIR` writes the default relation-local translation into a new,
+empty directory. `SpecTecCore` contains shared WFS, fresh, evaluator, plan, and
+certificate definitions. `SpecTecSupport` contains generated types and shared
+support. `SpecTecSccNNNN` files contain SCC plans, public judgements and evaluators
+interleaved in dependency order: a plan calling an earlier SCC stores that
+relation's external signature, including its evaluator selection predicate.
+`SpecTecEvalNNNN` files are import facades. A batch covers up to 32 consecutive
+SCCs and 2 MB of source. A larger SCC is split into `SpecTecPartNNNN_XXXX`
+modules at declaration boundaries, followed by its public evaluator module.
+`SpecTecAll` imports the complete semantic/evaluator chain.
+`SpecTecInversionNNNN` adds the public `ruleCases` wrappers;
+`SpecTecProofs` imports all of them. `SpecTecCases` contains requested case goals.
+Count all generated files when measuring costs; filenames no longer separate
+semantic source from evaluator source.
+
+For example, run `lean-skeleton --emit-modules /tmp/p4-lean spec` and compile
+the files in import order with `LEAN_PATH=/tmp/p4-lean lean -o NAME.olean
+NAME.lean` from that directory. The command refuses a nonempty destination to
+avoid replacing existing work. Module emission currently splits the rendered
+source after translation, so it still holds the complete source string during
+generation; compare measured build time and peak RSS before assuming that file
+splitting improves generation cost.
+`--module-split-bytes N` changes the byte limit, primarily for fixture tests
+and tuning; the default is 2,000,000 bytes.
+
 Translation stops at the first translation or ordering error. `--keep-going` retains independent declarations and reports rejected declarations.
 
 ## Relation semantics
 
 The default translation computes SCCs from positive, negative, expression, and typed callback calls. Each source rule contributes a member of its SCC-local `InProgram`. Same-SCC positive and negative premises become local atoms; calls to an earlier SCC become direct public success or `.fails` side judgements. A public relation is `SpecTecWFS.Holds` of its local atom. `.fails` is always available, while `.undetermined` is emitted only for a graph-cyclic SCC. Named callback dispatch belongs to the invoking SCC and points only at the propagated typed targets; external callbacks remain explicit boundary rules.
 
-The generated root namespace has no program-wide `Atom`, `InProgram`, membership alias tree, or head-property tree. A component still has a small local atom, membership relation, and head-property lemma for local induction. Extern-type and P4-model variables are emitted in sections containing the declarations and components that depend on them. Dependency closure is explicit: an unrelated component does not acquire those instances merely because another source declaration uses an extern.
+The generated root namespace has no program-wide `Atom`, `InProgram`, membership alias tree, or head-property tree. A component has a local atom, allowed-alternative membership and dependency metadata. Extern-type and P4-model variables are emitted in sections containing the declarations and components that depend on them. Dependency closure is explicit: an unrelated component does not acquire those instances merely because another source declaration uses an extern.
 
 `SpecTecWFS.Program.Equivalent` requires bidirectional membership for every rule. Its congruence theorems transport `Holds`, `Fails`, and `Undetermined` only after that condition is proved; graph reachability alone is not presented as semantic equivalence with the former global program. `--dump-relation-graph` prints the checked SCCs, signed/callback edges, typed callback sites, and external callback boundaries used by the printer.
 
@@ -34,41 +59,63 @@ The old global program is retained only in explicit compatibility modes:
 
 Generated source begins with a mode marker. The test suite passes the exact-counter option explicitly for legacy global proofs and size/split checks; default-mode locality and legacy reproducibility are tested separately.
 
-Each local component has a `head_property` theorem.  The optional
-`SpecTecProof.lean` module provides `spec_invert` and `spec_induction`; the
-component is inferred from the supplied proof, so splitting its membership
-exposes only the owning relation/SCC.  `spec_check_certificate` applies a typed
+The optional `SpecTecProof.lean` module provides `spec_invert` and
+`spec_induction`; the component is inferred from the supplied proof, so
+splitting its membership exposes only the owning relation/SCC.  `spec_check_certificate` applies a typed
 checker to an evaluator certificate.  The legacy `spec_invariant` command is
 retained for explicit global compatibility modes; it builds bounded closure
 lemmas, preserves `SpecTecWFS.Fails` on negative premises, and rejects
 unapproved axioms.
 
-The default evaluator represents every source rule with the shared dependent
-`SpecTecEval.EvalRulePlan`.  Its `Witness` packages the rule binders, while its
-`input`, `output`, `premises`, `recoverable`, and `publicSound` fields contain
-only relation-specific data.  Exactly one `...:eval:rule:N:plan` definition is
-emitted per source rule.  A relation collects those definitions in `evalRules`
-and gives them to one `SpecTecEval.Evaluator`; the common `Selected` and
-`AllFailed` definitions implement ordered or nondeterministic choice without a
-generated per-relation case tree.
+Each source rule has one typed `SpecTecPlan.Alternative` containing its rule
+index, recoverable source positions and dependent `Plan` body. Lexical `bind`,
+`bindCall`, `bindExternal` and `bindFresh` nodes introduce typed intermediate
+values at their source positions. `Plan.Witness` is their dependent telescope;
+`Plan.compile` interprets it as a WFS rule, while `Plan.premises` interprets the
+same body as the original ordered premise list.
 
-The relation-level `evalSelected`, `allRulesFailed`, and `eval` aliases remain,
-as does the inexpensive `selected_sound` bridge used by generated premise
-proofs.  The former relation-level `success_sound`, `ruleFailure_sound`, and
-`timeout` wrappers are replaced by `SpecTecEval.Evaluator.success_sound`,
-`SpecTecEval.Evaluator.ruleFailure_sound`, and
-`SpecTecEval.Evaluator.timeout`; pass `(evaluator := Relation.evaluator)` when
-Lean cannot infer it.  The former rule-internal declarations were also
-intentionally removed, rather than retained as compatibility aliases with
-their measured generation and elaboration cost.  Migrate them as follows
-(where `plan` is `«...:eval:rule:N:plan»`):
+`Allowed` identifies the typed alternatives belonging to an SCC. `InProgram`
+is `ProgramOf Allowed ()`, its exact image under compilation. `compiled_iff`
+proves both directions of membership. More than 32 alternatives use bounded
+`Allowed` leaves and a wrapper tree with `cases_allowed_N` elimination tactics.
+`ProgramOf.holds_cases` performs WFS membership decomposition and head transport
+once in Core. Every public `Relation.ruleCases` returns `SpecTecPlan.Cases`:
+an allowed alternative, a typed witness, its head equality and source-order
+premises. Select its `Allowed` constructor and destruct the dependent witness
+to recover concrete source binders. The optional proof-support tactics
+`spec_cases_allowed member` and `spec_unpack_witness witness` perform this
+uniformly, including bounded membership trees. `spec_reduce_head equality`
+normalizes the computed head by checked definitional equality before source
+cast and constructor elimination. No relation-specific disjunction or head
+transport proof is generated.
 
-- `«...:premises» binders` becomes `plan.premises witness`.
-- `«...:recoverable»` becomes `plan.recoverable`.
-- `«...:succeeds» input output` becomes `plan.Succeeds input output`.
-- `«...:failed» input` becomes `plan.Fails input`.
-- `«...:sound» proof` becomes `proof.sound`; when constructing a plan
-  proof directly, use `plan.publicSound witness prefix`.
+`Alternative.toEvalRule` adapts that same body using `Plan.premises true`.
+`SpecTecPlan.evaluator` maps the relation's ordered list of allowed alternatives
+through the adapter. Generated code contains no per-rule `EvalRulePlan` body,
+premise list or `publicSound` proof. `Plan.eval_premises_sound`,
+`Plan.premises_iff` and `Plan.holds_rule` prove the shared adapter's soundness.
+The common `Selected` and `AllFailed` definitions preserve ordered or
+nondeterministic choice. A prior-SCC call retains its `evalSelected` premise;
+its `ExternalSignature.selection` carries the implication to public WFS
+success. Public success alone cannot discharge that stronger selection premise.
+
+`SuccessCertificate` stores rule membership, opaque side and negative proofs,
+and untrusted child records. `checkSuccessWith` checks every required positive
+atom; its comparator requires a proof that `true` implies equality.
+`checkSuccessWith_sound` connects accepted finite certificates to WFS success,
+with public `checkedSuccess` wrappers. There is no evaluator or certificate
+completeness claim for arbitrary recursive or negative WFS programs.
+
+Public relation names, signatures, source introduction theorems, `evalSelected`,
+`allRulesFailed`, `eval`, `selected_sound` and `checkedSuccess` remain. Internal
+proof representations changed: `InProgram.rule_N` takes the plan's dependent
+witness, and `ruleCases` returns generic `Cases`. To inspect an evaluator rule,
+use `Relation.evalRules[index]` with a bounds proof; the former generated
+`...:eval:rule:N:plan` declarations are gone. An `EvalRulePlan` now relates its
+witness to input/output via `accepts`, rather than duplicating input/output
+projections. Its `publicSound` takes witness, input, output, the acceptance
+equality and the ordered premise proof. Success of any rule or evaluator still
+implies its public relation by the shared soundness theorem.
 
 Plans run source premises left-to-right through a shared `Prefix`.  Outcomes
 distinguish `success`, universal `ruleFailure`, `abort`, `unsupported`,
@@ -89,6 +136,17 @@ are rendering-sensitive.  The current implementation is intentionally
 incomplete: dynamic evaluator supply threading and extraction of protected
 names from actual inputs/contexts are not yet connected to full generated
 executions.
+
+Default-mode allocation spellings have the form `FRESH__` followed by a Lean
+`Nat.repr`. The numeric suffix is recorded separately from `FreshId.occurrence`:
+the latter is part of the identity and follows the supply's used-ID length,
+while the suffix may skip protected or previously rendered names. An
+allocation cannot reuse an ID already in `used` or `assigned`, and a rendering
+must agree with the stored `(FreshId, Nat)` assignment. Derived text remains
+in `rendered` for collision checks without becoming a new allocation.
+`Allocated`, `AllocatedAt`, and the `$fresh_typeId` supply rule all enforce
+numeric spelling. This intentionally narrows default-mode public relations;
+it does not change the two compatibility modes or imply deterministic suffixes.
 
 The `--fresh-exact-counter` compatibility model reproduces the interpreter's
 counter, including allocations in failed clauses. `--fresh-rollback` selects a proof abstraction:
@@ -235,16 +293,34 @@ nonmatch; syntax errors and interpreter aborts fail the check. Without
 specification. The resulting Lean file can then be extended with proof
 theorems for the generated `case_N` propositions.
 
-At present, the default translation of the full `spec` directory stops at one
-explicit rendering obligation: fresh-derived text reaches `$concat_text` in
-`DirectApplicationStmt_inst` while constructing `typeId ++ "_" ++ fresh`.
-The audit reports every such unproved observation; it does not silently change
-string semantics or fall back to a legacy mode.  Consequently the corpus
-propositions can be generated with `--obligations-only`, but cases 0, 1, and 5
-have not been verified against a complete default-mode `Program_ok` module.
-The measured status and reproducer are under
-`experiments/cases-0-1-5/RELATION_LOCAL_RESULTS.md`.  `--keep-going` remains
+Earlier experiments stopped at a fresh-derived `$concat_text` observation in
+`DirectApplicationStmt_inst`; that historical restriction is superseded by the
+current numeric allocation semantics. The full default translation now emits
+all P4 relations and evaluators, including this path. This does not itself
+prove corpus case propositions. The historical cases 0, 1 and 5 measurements
+remain in `experiments/cases-0-1-5/RELATION_LOCAL_RESULTS.md`; keep those goal and
+proof results separate from current full-module compilation measurements.
+`--keep-going` remains
 disallowed with cases because it can omit `Program_ok` and produce dangling
 propositions. The small
 `case-obligation.watsup` fixture in `p4spec/test/backend-lean` exercises the
 complete parse, translate, proposition, and Lean type-checking path.
+
+## Reproducible module measurements
+
+`p4spec/test/backend-lean/measure_modules.py DIR --mode clean --cpus 0,1
+--lean /path/to/installed/lean --report REPORT.json` compiles every emitted module serially with `lean -j 2`.
+Pass the installed compiler binary directly, bypassing toolchain managers
+that may perform network updates. The destination must contain no generated oleans. Keep Lean version, CPU
+selection and module-split limit fixed for comparisons. The JSON records every
+module's wall/CPU time, process peak RSS, source bytes/lines and olean bytes.
+Peak RSS is the maximum serial compiler process, not a sum of module peaks.
+Run `--mode incremental` against the same directory to record fresh and reused
+modules separately; unchanged source/import mtimes permit reuse. This is a
+measurement driver, not a content-addressed build system: a changed toolchain
+requires a clean run. Generation time and memory must be measured separately.
+
+`compare_module_sources.py BEFORE AFTER --report REPORT.json` checks all public
+relation signatures, evaluator and inversion names, source totals, and absence
+of proof-hole or axiom declarations. It records file hashes for reproduction;
+this source audit supplements, and does not replace, compilation or proof tests.
