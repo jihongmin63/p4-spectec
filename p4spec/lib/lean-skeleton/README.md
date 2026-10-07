@@ -43,15 +43,41 @@ retained for explicit global compatibility modes; it builds bounded closure
 lemmas, preserves `SpecTecWFS.Fails` on negative premises, and rejects
 unapproved axioms.
 
-The default evaluator runs source premises left-to-right through a shared
-`Prefix`.  Outcomes distinguish `success`, universal `ruleFailure`, `abort`,
-`unsupported`, zero-fuel `timeout`, and SCC-local `undetermined`.  Only a
-recoverable premise position may select the next source alternative.  A call
-with an unknown output needs an `OutputSearchFailure` quantified over every
-candidate; one failed candidate is not rejection evidence.  Generated
-`success_sound`, `ruleFailure_sound`, `abort_sound`, `unsupported_sound`,
-`timeout_sound`, and `undetermined_sound` theorems expose exactly the evidence
-carried by each outcome.  They do not add a determinism assumption.
+The default evaluator represents every source rule with the shared dependent
+`SpecTecEval.EvalRulePlan`.  Its `Witness` packages the rule binders, while its
+`input`, `output`, `premises`, `recoverable`, and `publicSound` fields contain
+only relation-specific data.  Exactly one `...:eval:rule:N:plan` definition is
+emitted per source rule.  A relation collects those definitions in `evalRules`
+and gives them to one `SpecTecEval.Evaluator`; the common `Selected` and
+`AllFailed` definitions implement ordered or nondeterministic choice without a
+generated per-relation case tree.
+
+The relation-level `evalSelected`, `allRulesFailed`, and `eval` aliases remain,
+as does the inexpensive `selected_sound` bridge used by generated premise
+proofs.  The former relation-level `success_sound`, `ruleFailure_sound`, and
+`timeout` wrappers are replaced by `SpecTecEval.Evaluator.success_sound`,
+`SpecTecEval.Evaluator.ruleFailure_sound`, and
+`SpecTecEval.Evaluator.timeout`; pass `(evaluator := Relation.evaluator)` when
+Lean cannot infer it.  The former rule-internal declarations were also
+intentionally removed, rather than retained as compatibility aliases with
+their measured generation and elaboration cost.  Migrate them as follows
+(where `plan` is `«...:eval:rule:N:plan»`):
+
+- `«...:premises» binders` becomes `plan.premises witness`.
+- `«...:recoverable»` becomes `plan.recoverable`.
+- `«...:succeeds» input output` becomes `plan.Succeeds input output`.
+- `«...:failed» input` becomes `plan.Fails input`.
+- `«...:sound» proof` becomes `proof.sound`; when constructing a plan
+  proof directly, use `plan.publicSound witness prefix`.
+
+Plans run source premises left-to-right through a shared `Prefix`.  Outcomes
+distinguish `success`, universal `ruleFailure`, `abort`, `unsupported`,
+zero-fuel `timeout`, and SCC-local `undetermined`.  Only a recoverable premise
+position may select the next source alternative.  A call with an unknown
+output needs an `OutputSearchFailure` quantified over every candidate; one
+failed candidate is not rejection evidence.  The generic `Evaluation` and
+`Evaluator` theorems expose exactly the evidence carried by each outcome and
+do not add a determinism assumption.
 
 The default fresh interface defines tagged `FreshId`/`FreshName`, allocation
 sites, branch rollback/commit, protected-name rendering certificates, and one

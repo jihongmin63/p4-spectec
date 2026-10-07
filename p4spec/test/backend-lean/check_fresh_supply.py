@@ -22,6 +22,9 @@ def main():
     translated = run([str(args.exe.resolve()), str(args.source)])
     assert translated.returncode == 0, translated.stdout + translated.stderr
     generated = translated.stdout
+    kept = run([str(args.exe.resolve()), "--keep-going", str(args.source)])
+    assert kept.returncode == 0, kept.stdout + kept.stderr
+    assert kept.stdout == generated, "keep-going changed an accepted translation"
     assert "SpecTecFresh.Allocates" in generated
     assert "SpecTecFresh.Derives" in generated
     assert "Program_ok:supply" in generated

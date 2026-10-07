@@ -79,9 +79,8 @@ private theorem pair_supply :
     pairAfterA pairAfterB siteA_text siteB_text
 
 example : «$nominal_pair».evalSelected () ("nominal-A", "nominal-B") := by
-  constructor
-  · trivial
-  · exact ⟨pairAfterB, ("nominal-A", "nominal-B"), rfl, rfl,
-      pair_supply, trivial⟩
+  apply SpecTecEval.Selected.here
+  exact ⟨⟨pairAfterB, ⟨("nominal-A", "nominal-B"), ()⟩⟩,
+    rfl, rfl, ⟨pair_supply, trivial⟩⟩
 
 end SpecTec

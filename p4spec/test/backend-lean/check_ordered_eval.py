@@ -50,8 +50,18 @@ def main() -> None:
         assert "def MayContinue" in generated
         assert "mayContinue : position ∈ recoverable" in generated
         assert "OrderedFailures" not in generated
+        for legacy in (":premises»", ":recoverable»", ":succeeds»", ":failed»", ":sound»"):
+            assert legacy not in generated, f"legacy rule-flow declaration remains: {legacy}"
+    assert "def «$ordered:regular:eval:rule:0:plan»" in ordered
+    assert "def «$ordered:regular:eval:rule:1:plan»" in ordered
+    assert "def «$ordered:regular:eval:rule:2:plan»" in ordered
+    assert "def Candidate.evalRules" in search
+    assert "SpecTecEval.Selected .nondeterministic (Candidate.evalRules)" in search
+    assert len(ordered.encode()) < 87_000, "reified ordered fixture grew past its measured budget"
     assert "abbrev «$ordered».eval" in ordered
-    assert "theorem «$ordered».success_sound" in ordered
+    assert "theorem «$ordered».success_sound" not in ordered
+    assert "theorem «$ordered».ruleFailure_sound" not in ordered
+    assert "theorem «$ordered».timeout" not in ordered
     assert "theorem «$ordered».abort_sound" not in ordered
     assert "theorem «$ordered».unsupported_sound" not in ordered
     assert "theorem «$ordered».timeout_sound" not in ordered
@@ -59,21 +69,20 @@ def main() -> None:
     assert ":eval:rule:0:prefix:" not in ordered
     assert ":eval:rule:1:prefix:" not in ordered
     assert ":eval:rule:2:prefix:" not in ordered
-    assert "def «$ordered:regular».evalSelected" in ordered
-    assert "def «$ordered:enabled».evalSelected" not in ordered
-    assert "SpecTecEval.Prefix ([«$ordered:regular:eval:rule:0:failed» input]" in ordered
+    assert "abbrev «$ordered:regular».evalSelected" in ordered
+    assert "def «$ordered:enabled».evaluator" not in ordered
+    assert "SpecTecEval.Selected .ordered («$ordered:regular».evalRules)" in ordered
     assert "«$ordered:regular».evalSelected «arg:0» «arg:1»" in ordered
-    assert "«$generic_option:eval:rule:0:premises» (X_T := X_T)" in ordered
+    assert "«$generic_option:eval:rule:0:plan» (X_T := X_T)" in ordered
     assert "(shadow : SpecTec.shadow) («eval:0» : (_root_.List SpecTec.shadow))" in ordered
     assert "abbrev Search.eval" in search
-    assert "theorem Search.ruleFailure_sound" in search
+    assert "theorem Search.ruleFailure_sound" not in search
     assert "Candidate.evalSelected n candidate" in search
-    candidate_selection = search.split("def Candidate.evalSelected", 1)[1].split(
+    candidate_selection = search.split("abbrev Candidate.evalSelected", 1)[1].split(
         "theorem Candidate.selected_sound", 1
     )[0]
-    assert "SpecTecEval.Prefix" not in candidate_selection
-    assert "«Candidate:eval:rule:0:succeeds» input output ∨" in candidate_selection
-    assert "«Candidate:eval:rule:1:succeeds» input output" in candidate_selection
+    assert "SpecTecEval.Selected .nondeterministic (Candidate.evalRules)" in candidate_selection
+    assert " ∨" not in candidate_selection
 
     common_plan_proof = r'''
 namespace SpecTecEvalPlanTest
@@ -171,6 +180,12 @@ end SpecTecEvalPlanTest
 
     with tempfile.TemporaryDirectory(prefix="p4-ordered-eval-") as directory:
         root = Path(directory)
+        empty_source = root / "empty.watsup"
+        empty_source.write_text("dec $sink<T>() : T\n")
+        empty = translate(args.exe, empty_source)
+        empty_proof = root / "EmptyProof.lean"
+        empty_proof.write_text("")
+        check_lean(empty, empty_proof, root / "Empty.lean", succeeds=True)
         common = root / "CommonPlanProof.lean"
         common.write_text(common_plan_proof)
         check_lean(ordered, common, root / "CommonPlan.lean", succeeds=True)

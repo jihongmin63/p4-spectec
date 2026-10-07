@@ -18,6 +18,13 @@ def run(command, *, cwd=None, env=None, succeeds=True):
         assert "sorryAx" not in output, output
     else:
         assert result.returncode != 0, "invalid certificate was accepted\n" + output
+        lowered = output.lower()
+        assert "unknown identifier" not in lowered, (
+            "negative certificate test referenced a missing declaration\n" + output
+        )
+        assert "unknownidentifier" not in lowered, (
+            "negative certificate test referenced a missing declaration\n" + output
+        )
     return output
 
 
@@ -66,7 +73,8 @@ private instance certificateBoundary :
 
 theorem gate_success_certificate
     (proof : Gate.eval 1 .ZERO (.success ())) : Gate .ZERO := by
-  spec_check_certificate proof using Gate.success_sound
+  spec_check_certificate proof using
+    (SpecTecEval.Evaluator.success_sound (evaluator := Gate.evaluator))
 
 theorem gate_abort_certificate
     (proof : Gate.eval 1 .ZERO (.abort "fatal")) :
@@ -101,16 +109,16 @@ end SpecTec
 namespace SpecTec
 open SpecTecProof
 example
-    (proof : «$ordered:regular:eval:rule:1:failed» (.WRAP .ZERO)) :
-    «$ordered:regular:eval:rule:0:failed» (.WRAP .ZERO) := by
+    (proof : «$ordered:regular:eval:rule:1:plan».Fails (.WRAP .ZERO)) :
+    «$ordered:regular:eval:rule:0:plan».Fails (.WRAP .ZERO) := by
   spec_check_certificate proof using id
 end SpecTec
 '''
     wrong_position = r'''
 namespace SpecTec
 example : SpecTecEval.RuleFailure
-    («$ordered:regular:eval:rule:1:premises» .ZERO)
-    «$ordered:regular:eval:rule:1:recoverable» := by
+    («$ordered:regular:eval:rule:1:plan».premises ⟨.ZERO, ()⟩)
+    «$ordered:regular:eval:rule:1:plan».recoverable := by
   apply SpecTecEval.RuleFailure.at 1 (Gate.evalSelected .ONE ())
   rfl
 end SpecTec
@@ -124,7 +132,8 @@ private instance badBoundary :
   unsupported := fun _ _ => False
 example (proof : Gate.eval 1 .ZERO (.abort "fatal")) :
     ∀ output, ¬ Gate.evalSucceeds .ZERO output := by
-  spec_check_certificate proof using Gate.ruleFailure_sound
+  spec_check_certificate proof using
+    (SpecTecEval.Evaluator.ruleFailure_sound (evaluator := Gate.evaluator))
 end SpecTec
 '''
     one_output_failure = r'''

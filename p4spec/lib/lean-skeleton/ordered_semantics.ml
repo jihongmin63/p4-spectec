@@ -1,7 +1,7 @@
 let source = {lean|
 set_option autoImplicit false
 
-universe u₁ u₂ u₃ u₄
+universe u₁ u₂ u₃ u₄ u₅
 
 namespace SpecTecEval
 
@@ -113,6 +113,29 @@ inductive AllFailed {Input : Type u₁} {Output : Type u₂}
   | cons {plan rest input} :
       plan.Fails input → AllFailed rest input → AllFailed (plan :: rest) input
 
+/-- Relation-specific rule data interpreted by the common evaluator. -/
+structure Evaluator (Input : Type u₁) (Output : Type u₂)
+    (Public : Input → Output → Prop) where
+  policy : SelectionPolicy
+  rules : List (EvalRulePlan.{u₁, u₂, u₃} Input Output Public)
+  undetermined : Input → Prop
+
+def Evaluator.Selected {Input : Type u₁} {Output : Type u₂}
+    {Public : Input → Output → Prop}
+    (evaluator : Evaluator Input Output Public) : Input → Output → Prop :=
+  SpecTecEval.Selected evaluator.policy evaluator.rules
+
+def Evaluator.AllFailed {Input : Type u₁} {Output : Type u₂}
+    {Public : Input → Output → Prop}
+    (evaluator : Evaluator Input Output Public) : Input → Prop :=
+  SpecTecEval.AllFailed evaluator.rules
+
+theorem Evaluator.selected_sound {Input : Type u₁} {Output : Type u₂}
+    {Public : Input → Output → Prop}
+    {evaluator : Evaluator Input Output Public} {input output}
+    (proof : evaluator.Selected input output) : Public input output :=
+  proof.sound
+
 /-- Failure of a call whose output was not fixed is universal over candidates. -/
 structure OutputSearchFailure (Output : Type u₁) (succeeds : Output → Prop) where
   noSuccess : ∀ output, ¬ succeeds output
@@ -187,6 +210,41 @@ inductive Evaluation {Input : Type u₁} {Output : Type u₂}
       isUndetermined input →
       Evaluation selectedSucceeds publicSucceeds allRulesFailed isUndetermined
         (fuel + 1) input .undetermined
+
+abbrev Evaluator.Evaluation {Input : Type u₁} {Output : Type u₂}
+    {Public : Input → Output → Prop} {Error : Type u₄} {Feature : Type u₅}
+    (evaluator : Evaluator Input Output Public)
+    [Boundary Input Error Feature] :
+    Nat → Input → Outcome Output Error Feature → Prop :=
+  SpecTecEval.Evaluation evaluator.Selected Public evaluator.AllFailed
+    evaluator.undetermined
+
+theorem Evaluator.success_sound {Input : Type u₁} {Output : Type u₂}
+    {Public : Input → Output → Prop} {Error : Type u₄} {Feature : Type u₅}
+    {evaluator : Evaluator Input Output Public} [Boundary Input Error Feature]
+    {fuel input output}
+    (proof : evaluator.Evaluation fuel input
+      (.success output : Outcome Output Error Feature)) :
+    Public input output := by
+  cases proof with
+  | success selected => exact selected.sound
+
+theorem Evaluator.ruleFailure_sound {Input : Type u₁} {Output : Type u₂}
+    {Public : Input → Output → Prop} {Error : Type u₄} {Feature : Type u₅}
+    {evaluator : Evaluator Input Output Public} [Boundary Input Error Feature]
+    {fuel input}
+    (proof : evaluator.Evaluation fuel input
+      (.ruleFailure : Outcome Output Error Feature)) :
+    ∀ output, ¬ Public input output := by
+  cases proof with
+  | ruleFailure _ search => exact search.noSuccess
+
+theorem Evaluator.timeout {Input : Type u₁} {Output : Type u₂}
+    {Public : Input → Output → Prop} {Error : Type u₄} {Feature : Type u₅}
+    (evaluator : Evaluator Input Output Public) [Boundary Input Error Feature]
+    (input : Input) :
+    evaluator.Evaluation 0 input (.timeout : Outcome Output Error Feature) :=
+  SpecTecEval.Evaluation.timeout input
 
 theorem Evaluation.success_sound {Input : Type u₁} {Output : Type u₂}
     {Error : Type u₃} {Feature : Type u₄}

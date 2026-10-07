@@ -135,11 +135,21 @@ type node = {
 
 type graph = node StringMap.t
 
+(* These names are aliases supplied by the generated Lean prelude rather than
+   IL declarations.  Keep-going validation must treat them like builtin types;
+   otherwise it prunes every lowered fresh declaration even though strict
+   translation emits and compiles the same references successfully. *)
+let lean_support_names : StringSet.t =
+  StringSet.of_list [ "FreshSupply"; "FreshSite" ]
+
 let make_graph (declarations : L.located_declaration list) : graph =
   List.mapi
     (fun (index : int) (source : L.located_declaration) ->
       (defined_name source.declaration,
-       { source; dependencies = references source.declaration; index }))
+       { source;
+         dependencies =
+           StringSet.diff (references source.declaration) lean_support_names;
+         index }))
     declarations
   |> List.to_seq |> StringMap.of_seq
 
