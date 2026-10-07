@@ -1,0 +1,41 @@
+(rule
+ (target tuple.lean)
+ (deps tuple.watsup tuple-proof.lean)
+ (action
+  (with-stdout-to tuple.lean
+   (progn
+    (run %{exe:../../lib/lean-skeleton/main.exe} %{dep:tuple.watsup})
+    (cat %{dep:tuple-proof.lean})))))
+
+(rule
+ (alias backend-lean)
+ (deps tuple.lean)
+ (action (run lean tuple.lean)))
+
+(rule
+ (target update.lean)
+ (deps update.watsup update-proof.lean)
+ (action
+  (with-stdout-to update.lean
+   (progn
+    (run %{exe:../../lib/lean-skeleton/main.exe} %{dep:update.watsup})
+    (cat %{dep:update-proof.lean})))))
+
+(rule
+ (alias backend-lean)
+ (deps update.lean)
+ (action (run lean update.lean)))
+
+(rule
+ (target slice.lean)
+ (deps slice.watsup slice-proof.lean)
+ (action
+  (with-stdout-to slice.lean
+   (progn
+    (run %{exe:../../lib/lean-skeleton/main.exe} %{dep:slice.watsup})
+    (cat %{dep:slice-proof.lean})))))
+
+(rule
+ (alias backend-lean)
+ (deps slice.lean)
+ (action (run lean slice.lean)))

@@ -1,0 +1,22 @@
+syntax innerRecord =
+  { LEFT nat,
+    RIGHT nat }
+
+syntax outerRecord =
+  { INNER innerRecord,
+    KEEP nat }
+
+var R : outerRecord
+var ns : nat*
+var n : nat
+var t : text
+var c : text
+
+dec $update_nested(outerRecord) : outerRecord
+def $update_nested(R) = R[ .INNER.RIGHT = 9 ]
+
+dec $update_list(nat*, nat, nat) : nat*
+def $update_list(ns, n_idx, n_value) = ns[ [n_idx] = n_value ]
+
+dec $update_text(text, nat, text) : text
+def $update_text(t, n_idx, c) = t[ [n_idx] = c ]

@@ -20,6 +20,12 @@ let unsupported (at : region) (construct : string) : 'a =
        (Diagnostic.error ~source:"lean" at
           ("Lean skeleton does not support " ^ construct)))
 
+let rec nest_pairs (make : 'a -> 'a -> 'a) (values : 'a list) : 'a =
+  match values with
+  | [last] -> last
+  | first :: rest -> make first (nest_pairs make rest)
+  | [] -> invalid_arg "cannot nest an empty tuple"
+
 let rec translate_type_with_parameters (type_parameters : string list)
     (typ : S.typ) : L.type_ref =
   match typ.it with
@@ -43,10 +49,9 @@ let rec translate_type_with_parameters (type_parameters : string list)
   | IterT (element, List) ->
       L.BuiltinType
         ("List", [ translate_type_with_parameters type_parameters element ])
-  | TupleT [ left; right ] ->
-      L.Pair
-        ( translate_type_with_parameters type_parameters left,
-          translate_type_with_parameters type_parameters right )
+  | TupleT (_ :: _ :: _ as elements) ->
+      nest_pairs (fun left right -> L.Pair (left, right))
+        (List.map (translate_type_with_parameters type_parameters) elements)
   | _ -> unsupported typ.at ("type " ^ S.Print.string_of_typ typ)
 
 let translate_type (typ : S.typ) : L.type_ref =
@@ -417,6 +422,33 @@ let fresh_term (typ : L.type_ref) (next : int) : term_result =
   { term = L.Variable (name, typ); premises = [];
     binders = [ name, typ ]; next = next + 1; helpers = [] }
 
+let append_text (left : L.term) (right : L.term) : L.term =
+  L.Binary ("++", left, right)
+
+let utf8_byte_size (value : L.term) : L.term =
+  L.Native ("String.utf8ByteSize", [ value ])
+
+let text_slice (result : terms_result) (typ : L.type_ref) (base : L.term)
+    (index : L.term) (length : L.term) : term_result =
+  (* As with byte prefix/suffix builtins, Lean Strings can represent only valid
+     UTF-8. A byte range that cuts a code point has no decomposition and hence
+     no derivation, while the OCaml interpreter can produce invalid UTF-8. *)
+  let value : term_result = fresh_term typ result.next in
+  let prefix : term_result = fresh_term typ value.next in
+  let suffix : term_result = fresh_term typ prefix.next in
+  let whole : L.term =
+    append_text (append_text prefix.term value.term) suffix.term
+  in
+  { value with
+    premises =
+      result.premises
+      @ [ L.Prop (L.Comparison (L.Eq, base, whole));
+          L.Prop (L.Comparison (L.Eq, utf8_byte_size prefix.term, index));
+          L.Prop (L.Comparison (L.Eq, utf8_byte_size value.term, length)) ];
+    binders = result.binders @ value.binders @ prefix.binders @ suffix.binders;
+    next = suffix.next;
+    helpers = result.helpers }
+
 let expand_expression_type (env : env) (at : region) (typ : L.type_ref) : L.type_ref =
   let lookup (name : string) : L.type_alias option =
     Option.map
@@ -697,12 +729,16 @@ let rec check_term (env : env) (type_parameters : string list) (at : region)
       | _ -> unsupported at
           ("MixopSC requires variant source and target: "
            ^ type_code source ^ " <: " ^ type_code target))
-  | TupleSC [ left_check; right_check ] ->
+  | TupleSC (left_check :: (_ :: _ as right_checks)) ->
       (match source, target with
       | Pair (source_left, source_right), Pair (target_left, target_right) ->
           let (left, right) : L.term * L.term = match term with
             | Tuple (left, right) -> left, right
             | _ -> L.Native ("Prod.fst", [ term ]), L.Native ("Prod.snd", [ term ])
+          in
+          let right_check : S.subcheck = match right_checks with
+            | [check] -> check
+            | checks -> TupleSC checks
           in
           L.Binary ("&&",
             check_term env type_parameters at source_left target_left left_check left,
@@ -931,7 +967,8 @@ let rec translate_term (env : env) (type_parameters : string list)
       (* The source is the runtime type: -n and nat - nat are annotated Nat but
          already translate to Int terms. *)
       unary value (cast_term env exp.at (numeric_type value) (expanded exp))
-  | TupleE [ left; right ] -> binary left right (fun left right -> L.Tuple (left, right))
+  | TupleE (_ :: _ :: _ as elements) ->
+      build elements (nest_pairs (fun left right -> L.Tuple (left, right)))
   | OptE None -> pure_term next (L.Typed (L.Native ("Option.none", []), typ))
   | OptE (Some value) -> unary value (fun term -> L.Native ("Option.some", [ term ]))
   | ListE values -> build values (fun terms -> L.Typed (L.ListLiteral terms, typ))
@@ -956,7 +993,16 @@ let rec translate_term (env : env) (type_parameters : string list)
             | _ -> assert false
           in
           { fresh with premises = result.premises @ [ L.Prop prop ]; binders = result.binders @ fresh.binders; helpers = result.helpers }
-      | _ -> unsupported exp.at "indexing other than a list with a natural index")
+      | BuiltinType ("String", []), BuiltinType ("Nat", []) ->
+          let result : terms_result = collect_terms recurse next [ base; index ] in
+          (match result.terms with
+          | [ base; index ] ->
+              text_slice result typ base index
+                (L.Number ("1", L.BuiltinType ("Nat", [])))
+          | _ -> assert false)
+      | _ ->
+          unsupported exp.at
+            "indexing other than a list or text with a natural index")
   | DotE (base, atom) ->
       let (name, field) : string * structure_field = structure_field env base.at (expanded base) atom in
       unary base (fun term -> L.Projection (name, field.name, term))
@@ -1014,8 +1060,143 @@ let rec translate_term (env : env) (type_parameters : string list)
         |> expand_expression_type env exp.at
       in
       { result with term = check_term env type_parameters exp.at source target subcheck result.term }
-  | SliceE _ -> unsupported exp.at "SliceE expression (start and length with bounds checks)"
-  | UpdE _ -> unsupported exp.at ("UpdE expression " ^ S.Print.string_of_exp exp)
+  | SliceE (base, index, length) -> (
+      match expanded base, numeric_type index, numeric_type length with
+      | BuiltinType ("List", [ _ ]), BuiltinType ("Nat", []),
+        BuiltinType ("Nat", []) ->
+          let result : terms_result =
+            collect_terms recurse next [ base; index; length ]
+          in
+          (match result.terms with
+          | [ base; index; length ] ->
+              let term : L.term =
+                L.Native ("List.take",
+                  [ length; L.Native ("List.drop", [ index; base ]) ])
+              in
+              let bound : L.prop =
+                L.Comparison
+                  (L.Le, L.Binary ("+", index, length),
+                   L.Native ("List.length", [ base ]))
+              in
+              { (combine_term result term) with
+                premises = result.premises @ [ L.Prop bound ] }
+          | _ -> assert false)
+      | BuiltinType ("String", []), BuiltinType ("Nat", []),
+        BuiltinType ("Nat", []) ->
+          let result : terms_result =
+            collect_terms recurse next [ base; index; length ]
+          in
+          (match result.terms with
+          | [ base; index; length ] -> text_slice result typ base index length
+          | _ -> assert false)
+      | _ ->
+          unsupported exp.at
+            "slicing other than a list or text with a natural start and length")
+  | UpdE (base, path, value) ->
+      let evaluated : terms_result = collect_terms recurse next [ base; value ] in
+      let (base_term, value_term) : L.term * L.term =
+        match evaluated.terms with
+        | [ base; value ] -> base, value
+        | _ -> assert false
+      in
+      let expanded_path (path : S.path) : L.type_ref =
+        translate_type_with_parameters type_parameters (path.note $ path.at)
+        |> expand_expression_type env path.at
+      in
+      let rec access_path (path : S.path) : L.term =
+        match path.it with
+        | RootP -> base_term
+        | DotP (parent, atom) ->
+            let (name, field) : string * structure_field =
+              structure_field env parent.at (expanded_path parent) atom
+            in
+            L.Projection (name, field.name, access_path parent)
+        | IdxP _ -> unsupported path.at "UpdE path with a non-final index"
+        | SliceP _ -> unsupported path.at "SliceP in UpdE path"
+      in
+      let rec update_fields (path : S.path) (replacement : L.term) : L.term =
+        match path.it with
+        | RootP -> replacement
+        | DotP (parent, atom) ->
+            let (name, field) : string * structure_field =
+              structure_field env parent.at (expanded_path parent) atom
+            in
+            let updated : L.term =
+              L.StructureUpdate
+                (L.Name name, access_path parent, field.name, replacement)
+            in
+            update_fields parent updated
+        | IdxP _ -> unsupported path.at "UpdE path with a non-final index"
+        | SliceP _ -> unsupported path.at "SliceP in UpdE path"
+      in
+      (match path.it with
+      | RootP | DotP _ ->
+          combine_term evaluated (update_fields path value_term)
+      | SliceP _ -> unsupported path.at "SliceP in UpdE path"
+      | IdxP (parent, index) ->
+          (match parent.it with
+          | RootP -> ()
+          | _ -> unsupported parent.at "UpdE path with a non-final index");
+          if numeric_type index <> L.BuiltinType ("Nat", []) then
+            unsupported index.at "UpdE index other than a natural";
+          let index_result : term_result = recurse evaluated.next index in
+          let premises : L.premise list =
+            evaluated.premises @ index_result.premises
+          in
+          let binders : (string * L.type_ref) list =
+            evaluated.binders @ index_result.binders
+          in
+          let helpers : L.declaration list =
+            evaluated.helpers @ index_result.helpers
+          in
+          (match expanded_path parent with
+          | BuiltinType ("List", [ _ ]) ->
+              let bound : L.prop =
+                L.Comparison
+                  (L.Lt, index_result.term,
+                   L.Native ("List.length", [ base_term ]))
+              in
+              { term =
+                  L.Native
+                    ("List.set", [ base_term; index_result.term; value_term ]);
+                premises = premises @ [ L.Prop bound ]; binders;
+                next = index_result.next; helpers }
+          | BuiltinType ("String", []) ->
+              let prefix : term_result =
+                fresh_term (L.BuiltinType ("String", [])) index_result.next
+              in
+              let old : term_result =
+                fresh_term (L.BuiltinType ("String", [])) prefix.next
+              in
+              let suffix : term_result =
+                fresh_term (L.BuiltinType ("String", [])) old.next
+              in
+              let one : L.term =
+                L.Number ("1", L.BuiltinType ("Nat", []))
+              in
+              { term =
+                  append_text (append_text prefix.term value_term) suffix.term;
+                premises =
+                  premises
+                  @ [ L.Prop
+                        (L.Comparison
+                           (L.Eq, base_term,
+                            append_text
+                              (append_text prefix.term old.term) suffix.term));
+                      L.Prop
+                        (L.Comparison
+                           (L.Eq, utf8_byte_size prefix.term,
+                            index_result.term));
+                      L.Prop
+                        (L.Comparison
+                           (L.Eq, utf8_byte_size old.term, one));
+                      L.Prop
+                        (L.Comparison
+                           (L.Eq, utf8_byte_size value_term, one)) ];
+                binders =
+                  binders @ prefix.binders @ old.binders @ suffix.binders;
+                next = suffix.next; helpers }
+          | _ -> unsupported path.at "UpdE index on a non-list or non-text"))
   | MatchE _ -> unsupported exp.at ("MatchE expression " ^ S.Print.string_of_exp exp)
   | DownCastE _ -> unsupported exp.at ("DownCastE expression " ^ S.Print.string_of_exp exp)
   | TupleE _ -> unsupported exp.at ("TupleE expression with unsupported arity: " ^ S.Print.string_of_exp exp)

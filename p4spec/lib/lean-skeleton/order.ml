@@ -28,7 +28,9 @@ let reference_names (reference : L.reference) : StringSet.t =
 
 let rec term_references (term : L.term) : StringSet.t =
   let own : StringSet.t = match term with
-    | Variable (_, typ) | Number (_, typ) | Typed (_, typ) | StructureLiteral (typ, _) -> type_references typ
+    | Variable (_, typ) | Number (_, typ) | Typed (_, typ)
+    | StructureLiteral (typ, _) | StructureUpdate (typ, _, _, _) ->
+        type_references typ
     | Constructor (reference, _) ->
         StringSet.add reference.type_name (unions (List.map type_references reference.type_arguments))
     | FunctionReference reference -> reference_names reference
@@ -43,7 +45,8 @@ let rec term_references (term : L.term) : StringSet.t =
           (StringSet.union (type_references source) (type_references target))
     | Lambda (_, typ, _) -> type_references typ
     | Projection (name, _, _) -> StringSet.singleton name
-    | Boolean _ | Text _ | Native _ | Unary _ | Binary _ | Tuple _ | ListLiteral _ | Index _ | Decide _ -> StringSet.empty
+    | Boolean _ | Text _ | Native _ | Unary _ | Binary _ | Tuple _
+    | ListLiteral _ | Index _ | Decide _ -> StringSet.empty
   in
   StringSet.union own (unions (List.map term_references (Traversal.term_children term)))
 

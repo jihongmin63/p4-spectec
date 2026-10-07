@@ -72,6 +72,7 @@ endef
 # Fast tests (no -det)
 TEST_ALIASES := \
   backend-adoc \
+  backend-lean \
   backend-latex \
   backend-splice \
   speclang \

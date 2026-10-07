@@ -1,0 +1,12 @@
+var a : nat
+var b : nat
+var c : nat
+var i : int
+var j : int
+var k : int
+
+dec $triple(nat, nat, nat) : (nat, nat, nat)
+def $triple(a, b, c) = (a, b, c)
+
+dec $triple_nat(int, int, int) : bool
+def $triple_nat(i, j, k) = ((i, j, k) <: (nat, nat, nat))

@@ -84,6 +84,9 @@ let rec print_term (bound : string list) (term : L.term) : string =
   | StructureLiteral (typ, fields) ->
       "({ " ^ String.concat ", " (List.map (fun (name, value) -> print_identifier name ^ " := " ^ print value) fields)
       ^ " } : " ^ print_type bound typ ^ ")"
+  | StructureUpdate (typ, base, field, value) ->
+      "({ " ^ print base ^ " with " ^ print_identifier field ^ " := "
+      ^ print value ^ " } : " ^ print_type bound typ ^ ")"
   | Projection (name, field, value) ->
       "(" ^ print_global_name bound name ^ "." ^ print_identifier field ^ " " ^ print value ^ ")"
   | Index (base, index) -> "(" ^ print base ^ "[" ^ print index ^ "]?)"

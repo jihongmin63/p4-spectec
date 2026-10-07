@@ -1,0 +1,12 @@
+var ns : nat*
+var n : nat
+var t : text
+
+dec $list_slice(nat*, nat, nat) : nat*
+def $list_slice(ns, n_start, n_length) = ns[n_start : n_length]
+
+dec $text_slice(text, nat, nat) : text
+def $text_slice(t, n_start, n_length) = t[n_start : n_length]
+
+dec $text_index(text, nat) : text
+def $text_index(t, n_start) = t[n_start]
