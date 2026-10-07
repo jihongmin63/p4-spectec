@@ -442,3 +442,111 @@
  (alias backend-lean)
  (deps fresh-reset.actual)
  (action (diff fresh-reset.expected fresh-reset.actual)))
+
+(executable
+ (name fresh_regression)
+ (modules fresh_regression)
+ (libraries p4spectec runtime interface diagnostic bignum.bigint))
+
+(rule
+ (target fresh-regression.actual)
+ (deps fresh-regression.watsup)
+ (action
+  (with-stdout-to fresh-regression.actual
+   (run %{exe:fresh_regression.exe} %{dep:fresh-regression.watsup}))))
+
+(rule
+ (alias backend-lean)
+ (deps fresh-regression.actual)
+ (action (diff fresh-regression.expected fresh-regression.actual)))
+
+(rule
+ (target fresh-regression.lean)
+ (deps fresh-regression.watsup fresh-regression-proof.lean)
+ (action
+  (with-stdout-to fresh-regression.lean
+   (progn
+    (run %{exe:../../lib/lean-skeleton/main.exe} %{dep:fresh-regression.watsup})
+    (cat %{dep:fresh-regression-proof.lean})))))
+
+(rule
+ (alias backend-lean)
+ (deps fresh-regression.lean)
+ (action (run lean fresh-regression.lean)))
+
+(rule
+ (alias backend-lean)
+ (deps check_size.py)
+ (action
+  (run python3 %{dep:check_size.py}
+   --exe %{exe:../../lib/lean-skeleton/main.exe})))
+
+(rule
+ (target prefix-regression.lean)
+ (deps prefix-regression.watsup prefix-regression-proof.lean)
+ (action
+  (with-stdout-to prefix-regression.lean
+   (progn
+    (run %{exe:../../lib/lean-skeleton/main.exe} %{dep:prefix-regression.watsup})
+    (cat %{dep:prefix-regression-proof.lean})))))
+
+(rule
+ (alias backend-lean)
+ (deps prefix-regression.lean)
+ (action (run lean prefix-regression.lean)))
+
+(executable
+ (name prefix_regression)
+ (modules prefix_regression)
+ (libraries p4spectec runtime interface diagnostic bignum.bigint))
+
+(rule
+ (target prefix-regression.actual)
+ (deps prefix-regression.watsup)
+ (action
+  (with-stdout-to prefix-regression.actual
+   (run %{exe:prefix_regression.exe} %{dep:prefix-regression.watsup}))))
+
+(rule
+ (alias backend-lean)
+ (deps prefix-regression.actual)
+ (action (diff prefix-regression.expected prefix-regression.actual)))
+
+(rule
+ (alias backend-lean)
+ (deps check_atom_split.py
+  relation-wfs.watsup relation-wfs-proof.lean
+  decidable-eq.watsup decidable-eq-proof.lean
+  print.watsup print-proof.lean
+  prefix-regression.watsup prefix-regression-proof.lean
+  extern-model.watsup extern-model-proof.lean)
+ (action
+  (run python3 %{dep:check_atom_split.py}
+   --exe %{exe:../../lib/lean-skeleton/main.exe})))
+
+(rule
+ (alias backend-lean)
+ (deps check_program_split.py
+  relation-wfs.watsup relation-wfs-proof.lean
+  decidable-eq.watsup decidable-eq-proof.lean
+  print.watsup print-proof.lean
+  fresh-regression.watsup fresh-regression-proof.lean
+  prefix-regression.watsup prefix-regression-proof.lean
+  extern-model.watsup extern-model-proof.lean)
+ (action
+  (run python3 %{dep:check_program_split.py}
+   --exe %{exe:../../lib/lean-skeleton/main.exe})))
+
+(rule
+ (target rule-shadow.lean)
+ (deps rule-shadow.watsup rule-shadow-proof.lean)
+ (action
+  (with-stdout-to rule-shadow.lean
+   (progn
+    (run %{exe:../../lib/lean-skeleton/main.exe} %{dep:rule-shadow.watsup})
+    (cat %{dep:rule-shadow-proof.lean})))))
+
+(rule
+ (alias backend-lean)
+ (deps rule-shadow.lean)
+ (action (run lean rule-shadow.lean)))

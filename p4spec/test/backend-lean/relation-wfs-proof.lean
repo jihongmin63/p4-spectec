@@ -9,7 +9,7 @@ private theorem unwrap_enabled_num_fails (n : Nat) :
     | _ => True
   apply proof interpretation
   intro rule inProgram side positive negative
-  cases inProgram <;> simp [interpretation]
+  cases_in_program inProgram <;> simp [interpretation]
 
 private theorem even_one_fails :
     SpecTecWFS.Fails InProgram (Atom.Even 1) := by
@@ -20,7 +20,7 @@ private theorem even_one_fails :
     | _ => True
   apply proof interpretation
   intro rule inProgram side positive negative
-  cases inProgram <;> simp [interpretation]
+  cases_in_program inProgram <;> simp [interpretation]
 
 example : ¬ Even 1 := by
   intro proof
@@ -44,7 +44,7 @@ private theorem negative_cycle_lower_absent :
       SpecTecWFS.All (fun atom => ¬ SpecTecWFS.gamma InProgram interpretation atom)
         rule.negative → interpretation rule.head := by
     intro rule inProgram side positive negative
-    cases inProgram <;> simp_all [interpretation, SpecTecWFS.All]
+    cases_in_program inProgram <;> simp_all [interpretation, SpecTecWFS.All]
   have prefixed : ∀ atom, SpecTecWFS.alternating InProgram interpretation atom →
       interpretation atom := by
     intro atom proof
@@ -87,7 +87,7 @@ private theorem uncertain_enabled_lower_absent :
       SpecTecWFS.All (fun atom => ¬ SpecTecWFS.upper InProgram atom)
         rule.negative → interpretation rule.head := by
     intro rule inProgram side positive negative
-    cases inProgram <;> simp_all [interpretation, SpecTecWFS.All]
+    cases_in_program inProgram <;> simp_all [interpretation, SpecTecWFS.All]
     · exact negative negative_cycle_upper_B
     · exact negative negative_cycle_upper_A
   intro proof

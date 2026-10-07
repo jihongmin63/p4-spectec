@@ -96,7 +96,7 @@ example : ∀ result, ¬ SpecTec.«$print_» (SpecTec.bad.mk 1) result := by
   intro result
   apply SpecTecWFS.Holds.not_of_rules
   intro rule inProgram side positive negative
-  cases inProgram <;> simp_all [SpecTecWFS.All]
+  cases_in_program inProgram <;> simp_all [SpecTecWFS.All]
   intro hType hValue hResult
   cases hType
   cases hValue
@@ -108,7 +108,7 @@ example : ∀ result,
   intro result
   apply SpecTecWFS.Holds.not_of_rules
   intro rule inProgram side positive negative
-  cases inProgram <;> simp_all [SpecTecWFS.All]
+  cases_in_program inProgram <;> simp_all [SpecTecWFS.All]
   intro hType hValue hResult
   cases hType
   cases hValue

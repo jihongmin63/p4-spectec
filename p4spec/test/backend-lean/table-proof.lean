@@ -34,7 +34,7 @@ theorem compat_deterministic {l r : SpecTec.ty} {b₁ b₂ : Bool}
   have deterministic := SpecTecWFS.Holds.sound
     (interpretation := interpretation) h₁ (by
       intro rule inProgram side positive negative
-      cases inProgram <;> dsimp [interpretation, SpecTecWFS.All] at *
+      cases_in_program inProgram <;> dsimp [interpretation, SpecTecWFS.All] at *
       all_goals
         intro other derived
         obtain ⟨nextRule, nextInProgram, head, nextSide, nextPositive, nextNegative⟩ :=
@@ -65,7 +65,7 @@ theorem compat_deterministic {l r : SpecTec.ty} {b₁ b₂ : Bool}
 example : ¬ SpecTec.«$is_small» SpecTec.ty.A true := by
   apply SpecTecWFS.Holds.not_of_rules
   intro rule inProgram side positive negative
-  cases inProgram <;> simp_all [SpecTecWFS.All, SpecTec.«$is_small:row»]
+  cases_in_program inProgram <;> simp_all [SpecTecWFS.All, SpecTec.«$is_small:row»]
   case rule_2 small =>
     cases small <;> simp_all
 
@@ -79,7 +79,7 @@ example : ¬ ∃ b, SpecTec.«$is_red» SpecTec.color.GREEN b := by
     (program := SpecTec.InProgram) (SpecTec.Atom.«$is_red» .GREEN b)
     (by
       intro rule inProgram side positive negative
-      cases inProgram <;> simp_all [SpecTecWFS.All])
+      cases_in_program inProgram <;> simp_all [SpecTecWFS.All])
   exact impossible h
 
 -- A parameterless table has a constant fallback selector.
@@ -91,7 +91,7 @@ example : ¬ ∃ b, SpecTec.«$never» b := by
     (program := SpecTec.InProgram) (SpecTec.Atom.«$never» b)
     (by
       intro rule inProgram side positive negative
-      cases inProgram <;> simp_all [SpecTecWFS.All])
+      cases_in_program inProgram <;> simp_all [SpecTecWFS.All])
   exact impossible h
 
 -- Callers: a premise and a function argument.

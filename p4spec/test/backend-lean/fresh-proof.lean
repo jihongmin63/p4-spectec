@@ -41,7 +41,7 @@ private theorem only_zero_one_fails :
     SpecTecWFS.Fails InProgram (Atom.OnlyZero 1) := by
   intro possible
   obtain ⟨rule, inProgram, head, _, _, _⟩ := SpecTecWFS.Derives.cases possible
-  cases inProgram <;> simp_all
+  cases_in_program inProgram <;> simp_all
 
 example : «$after_rule_failure» "FRESH__1" := by
   have first : «$after_rule_failure:fail:0» 0 1 :=
@@ -55,7 +55,7 @@ private theorem only_zero_output_one_never (output : typeId)
     ¬ SpecTecWFS.Derives InProgram negative (Atom.OnlyZeroOutput 1 output) := by
   intro possible
   obtain ⟨rule, inProgram, head, _, _, _⟩ := SpecTecWFS.Derives.cases possible
-  cases inProgram <;> simp_all
+  cases_in_program inProgram <;> simp_all
 
 private theorem output_call_match_fails (value : typeId) :
     SpecTecWFS.Fails InProgram
@@ -63,13 +63,13 @@ private theorem output_call_match_fails (value : typeId) :
   intro possible
   obtain ⟨rule, inProgram, head, _, positive, _⟩ :=
     SpecTecWFS.Derives.cases possible
-  cases inProgram <;> simp_all [SpecTecWFS.All]
+  cases_in_program inProgram <;> simp_all [SpecTecWFS.All]
   exact only_zero_output_one_never _ _ positive
 
 example : «$after_output_failure» "FRESH__1" := by
   have first : «$after_output_failure:fail:0» 0 1 :=
     «$after_output_failure:fail:0».guard_2 0 "FRESH__0" "FRESH__0"
-      "zero" 1 fresh_zero rfl (output_call_match_fails "FRESH__0")
+      1 fresh_zero rfl (output_call_match_fails "FRESH__0")
   apply «$after_output_failure».from_initial_counter 2
   exact «$after_output_failure:state».case_2 0 "FRESH__1" 1 2 first fresh_one
 
@@ -89,7 +89,7 @@ private theorem nonzero_match_fails (n : Nat) (nonzero : n ≠ 0) :
     SpecTecWFS.Fails InProgram (Atom.«$fresh_typeIds:match:0» n) := by
   intro possible
   obtain ⟨rule, inProgram, head, _, _, _⟩ := SpecTecWFS.Derives.cases possible
-  cases inProgram <;> simp_all
+  cases_in_program inProgram <;> simp_all
 
 example : «$fresh_typeIds» 2 ["FRESH__0", "FRESH__1"] := by
   have failed0 : «$fresh_typeIds:fail:0» 0 2 0 :=

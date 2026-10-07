@@ -1,0 +1,11 @@
+syntax expression = EXP
+var e : expression
+relation Check: |- expression bool
+  hint(input %0 %1)
+rule Check/true: |- e true
+rule Check/expression: |- e false
+rule Check/after: |- e true
+  -- Check: |- e false
+var b : bool
+rule Check/guard: |- e b
+  -- if b

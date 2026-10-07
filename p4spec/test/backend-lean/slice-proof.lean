@@ -14,7 +14,7 @@ example : ¬ SpecTec.«$list_slice» [1, 2, 3] 3 1 [] := by
     | _ => True
   have valid := SpecTecWFS.Holds.sound (interpretation := interpretation) h (by
     intro rule inProgram side positive negative
-    cases inProgram <;> simp_all [interpretation, SpecTecWFS.All])
+    cases_in_program inProgram <;> simp_all [interpretation, SpecTecWFS.All])
   exact (by decide : ¬ (3 + 1 ≤ ([1, 2, 3] : List Nat).length)) valid
 
 example : SpecTec.«$text_slice» "abc" 1 1 "b" := by
@@ -24,7 +24,7 @@ example : SpecTec.«$text_slice» "abc" 1 1 "b" := by
 example : ¬ SpecTec.«$text_slice» "abc" 3 1 "x" := by
   apply SpecTecWFS.Holds.not_of_rules
   intro rule inProgram side positive negative
-  cases inProgram <;> simp_all [SpecTecWFS.All]
+  cases_in_program inProgram <;> simp_all [SpecTecWFS.All]
   intro hwhole hstart hlength hresult
   have size := congrArg String.utf8ByteSize hwhole
   have literal_size : ("abc").utf8ByteSize = 3 := by decide
@@ -38,7 +38,7 @@ example : SpecTec.«$text_index» "abc" 1 "b" := by
 example : ¬ SpecTec.«$text_index» "abc" 3 "x" := by
   apply SpecTecWFS.Holds.not_of_rules
   intro rule inProgram side positive negative
-  cases inProgram <;> simp_all [SpecTecWFS.All]
+  cases_in_program inProgram <;> simp_all [SpecTecWFS.All]
   intro hwhole hstart hresult
   have size := congrArg String.utf8ByteSize hwhole
   have literal_size : ("abc").utf8ByteSize = 3 := by decide

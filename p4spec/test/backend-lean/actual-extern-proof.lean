@@ -17,7 +17,7 @@ private theorem actual_extern_sound (atom : Atom)
     (proof : SpecTecWFS.Holds InProgram atom) : actualExternAllowed atom := by
   apply SpecTecWFS.Holds.sound (interpretation := actualExternAllowed) proof
   intro rule inProgram side positive negative
-  cases inProgram <;> simp_all [actualExternAllowed, SpecTecWFS.All]
+  cases_in_program inProgram <;> simp_all [actualExternAllowed, SpecTecWFS.All]
 
 example (state : archState) :
     «$init_archState» state ↔ SpecTecExternTypes.validArchState state := by

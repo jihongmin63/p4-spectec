@@ -15,7 +15,7 @@ example :
       (SpecTec.outerRecord.mk (SpecTec.innerRecord.mk 1 9) 4))
     (by
       intro rule inProgram side positive negative
-      cases inProgram <;> simp_all [SpecTecWFS.All])
+      cases_in_program inProgram <;> simp_all [SpecTecWFS.All])
   exact impossible h
 
 example :
@@ -29,7 +29,7 @@ example :
       (SpecTec.outerRecord.mk (SpecTec.innerRecord.mk 4 9) 3))
     (by
       intro rule inProgram side positive negative
-      cases inProgram <;> simp_all [SpecTecWFS.All])
+      cases_in_program inProgram <;> simp_all [SpecTecWFS.All])
   exact impossible h
 
 example : SpecTec.«$update_list» [1, 2, 3] 1 9 [1, 9, 3] := by
@@ -44,7 +44,7 @@ example : ¬ SpecTec.«$update_list» [1, 2, 3] 3 9 [1, 2, 3] := by
     | _ => True
   have valid := SpecTecWFS.Holds.sound (interpretation := interpretation) h (by
     intro rule inProgram side positive negative
-    cases inProgram <;> simp_all [interpretation, SpecTecWFS.All])
+    cases_in_program inProgram <;> simp_all [interpretation, SpecTecWFS.All])
   exact (by decide : ¬ (3 < ([1, 2, 3] : List Nat).length)) valid
 
 example : SpecTec.«$update_text» "abc" 1 "x" "axc" := by
@@ -54,7 +54,7 @@ example : SpecTec.«$update_text» "abc" 1 "x" "axc" := by
 example : ¬ SpecTec.«$update_text» "abc" 3 "x" "abc" := by
   apply SpecTecWFS.Holds.not_of_rules
   intro rule inProgram side positive negative
-  cases inProgram <;> simp_all [SpecTecWFS.All]
+  cases_in_program inProgram <;> simp_all [SpecTecWFS.All]
   intro hwhole hidx hc hresult
   have size := congrArg String.utf8ByteSize hwhole
   simp only [String.utf8ByteSize_append] at size
@@ -64,7 +64,7 @@ example : ¬ SpecTec.«$update_text» "abc" 3 "x" "abc" := by
 example : ¬ SpecTec.«$update_text» "abc" 1 "xy" "axyc" := by
   apply SpecTecWFS.Holds.not_of_rules
   intro rule inProgram side positive negative
-  cases inProgram <;> simp_all [SpecTecWFS.All]
+  cases_in_program inProgram <;> simp_all [SpecTecWFS.All]
   intro hwhole hidx hc hresult
   have literal_size : ("xy").utf8ByteSize = 2 := by decide
   have size := congrArg String.utf8ByteSize hc

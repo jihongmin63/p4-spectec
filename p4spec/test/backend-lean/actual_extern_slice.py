@@ -34,19 +34,23 @@ def main() -> None:
     )
     source = result.stdout
     assert source, result.stderr
-    prefix, atom_tail = source.split("inductive Atom : Type 1 where\n", 1)
-    atom_body, program_tail = atom_tail.split(
-        "\n\ninductive InProgram : SpecTecWFS.Rule Atom → Prop where\n", 1
-    )
-    program_body = program_tail.split("\n\n", 1)[0]
+    atom_start = re.search(r"^inductive (?:Atom :|«Atom:)", source, re.M)
+    assert atom_start is not None
+    prefix, atom_tail = source[:atom_start.start()], source[atom_start.start():]
+    program_start = re.search(r"^inductive (?:InProgram :|«InProgram:)", atom_tail, re.M)
+    assert program_start is not None
+    atom_body = atom_tail[:program_start.start()]
+    program_body = atom_tail[program_start.start():].split("\n\ndef ", 1)[0]
 
     atoms = [
-        line for line in atom_body.splitlines()
+        re.sub(r" → «Atom:[^»]+»$", " → Atom", line)
+        for line in atom_body.splitlines()
         if any(line.startswith(f"  | {name} ") for name in NAMES)
         or line.startswith("  | relation_call ")
     ]
     rules = [
-        line for line in program_body.splitlines()
+        re.sub(r" : «InProgram:[^»]+» ", " : InProgram ", line)
+        for line in program_body.splitlines()
         if any(f"head := (@Atom.{name} " in line for name in NAMES)
         or line.startswith("  | external_call ")
     ]
@@ -58,13 +62,17 @@ def main() -> None:
         "inductive Atom : Type 1 where\n" + "\n".join(atoms),
         "inductive InProgram : SpecTecWFS.Rule Atom → Prop where\n"
         + "\n".join(rules),
+        'macro "cases_in_program" h:Lean.Parser.Tactic.elimTarget : tactic =>\n'
+        '  `(tactic| cases $h)',
     ]
     for name in NAMES:
         pieces.append(extract(rf"^def {re.escape(name)}(?=\s|\().*?(?=\n\n)", source))
     for name in NAMES:
-        pieces.append(extract(
-            rf"^namespace {re.escape(name)}\n.*?^end {re.escape(name)}$", source
-        ))
+        theorems = re.findall(
+            rf"^theorem {re.escape(name)}\..*?(?=\n\n)", source, re.M | re.S
+        )
+        assert theorems, name
+        pieces.extend(theorems)
     sys.stdout.write("\n\n".join(pieces) + "\n\nend SpecTec\n")
 
 
