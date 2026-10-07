@@ -11,7 +11,7 @@ The executable translates elaborated SpecTec IL into Lean source. Its path is:
 ## Module Responsibilities
 
 - `ast.ml` defines the source alias and the Lean intermediate representation.
-- `translator.ml` handles IL types, expressions, premises, relations, and declarations. `builtin.ml` provides supported builtin definitions; `source_dependencies.ml` detects recursive IL dependencies.
+- `translator.ml` handles IL types, expressions, premises, relations, and declarations. `builtin.ml` provides total builtins as Lean definitions and `builtin_relation.ml` provides partial or value-comparing builtins as relations; `source_dependencies.ml` detects recursive IL dependencies.
 - `order.ml` validates and orders Lean declarations. `traversal.ml` provides recursive operations over the Lean AST used by ordering and translation.
 - `printer.ml` serializes declarations and terms. `identifier.ml` escapes names for Lean syntax.
 - `main.ml` owns command-line behavior; `pipeline.ml` owns the translation-to-printing flow.
