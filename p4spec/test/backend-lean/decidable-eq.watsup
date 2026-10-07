@@ -18,6 +18,7 @@ syntax node =
   | MANY branch*
   | MAYBE branch?
   | PAIRED (branch, branch)
+  | TRIPLE (branch, branch, branch)
   | BOXED box<branch>
   | ALIASED branchList
   | SHADOWS DecidableEq Decidable isTrue isFalse

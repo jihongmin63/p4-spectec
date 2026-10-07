@@ -1,0 +1,129 @@
+syntax SpecTecPrint = PRINT
+
+builtin dec $print_<X>(X) : text
+
+syntax defaultCase =
+  | SHOW bool int text? text* (nat, nat, nat) (nat, (nat, nat))
+  | _TAG text
+
+syntax hinted =
+  | CUR text text hint(print %1 %)
+  | FUSE text hint(print "pre"#%0#"post")
+  | BRACK text hint(print `( % `))
+  | EMPTY text hint(print "" %0 "")
+
+syntax child = CHILD text hint(print "child:"#%)
+
+syntax parent =
+  | child
+  | PARENT
+
+syntax wrapper<T> = WRAP T
+
+syntax leaf = LEAF text hint(print "leaf:"#%)
+
+syntax recA
+syntax recB
+
+syntax recA = A recB*
+syntax recB = B recA?
+
+syntax bad =
+  { FIELD nat }
+
+syntax badWrapper = BAD bad
+
+syntax skipsBad = SKIP bad hint(print "ok")
+
+syntax forwarded = FORWARDED text
+
+syntax flatTripleAlias = (nat, nat, nat)
+
+syntax firstPrint = FIRST_PRINT text*
+syntax secondPrint = SECOND_PRINT text*
+
+syntax printBox<T> = PRINT_BOX T
+
+syntax tripleHolder = TRIPLE_HOLD wrapper<(nat, nat, nat)>
+
+syntax printTree =
+  | PRINT_LEAF
+  | PRINT_NODE printBox<printTree>
+
+var defaultValue : defaultCase
+var hintedValue : hinted
+var parentValue : parent
+var wrapperValue : wrapper<text>
+var wrapperLeafValue : wrapper<leaf>
+var recursiveValue : recA
+var badValue : bad
+var badWrapperValue : badWrapper
+var skipsBadValue : skipsBad
+var flatTripleValue : (nat, nat, nat)
+var wrapperTripleValue : wrapper<(nat, nat, nat)>
+var forwardedValue : forwarded
+var flatTripleAliasValue : flatTripleAlias
+var firstPrintValue : firstPrint
+var secondPrintValue : secondPrint
+var printTreeValue : printTree
+var tripleHolderValue : tripleHolder
+
+dec $render<X>(X) : text
+def $render<X>(X) = $print_<X>(X)
+
+dec $render_default(defaultCase) : text
+def $render_default(defaultValue) = $print_<defaultCase>(defaultValue)
+
+dec $render_hinted(hinted) : text
+def $render_hinted(hintedValue) = $print_<hinted>(hintedValue)
+
+dec $render_parent(parent) : text
+def $render_parent(parentValue) = $print_<parent>(parentValue)
+
+dec $render_wrapper(wrapper<text>) : text
+def $render_wrapper(wrapperValue) = $print_<wrapper<text>>(wrapperValue)
+
+dec $render_wrapper_leaf(wrapper<leaf>) : text
+def $render_wrapper_leaf(wrapperLeafValue) = $print_<wrapper<leaf>>(wrapperLeafValue)
+
+dec $render_recursive(recA) : text
+def $render_recursive(recursiveValue) = $print_<recA>(recursiveValue)
+
+dec $render_bad(bad) : text
+def $render_bad(badValue) = $print_<bad>(badValue)
+
+dec $render_bad_wrapper(badWrapper) : text
+def $render_bad_wrapper(badWrapperValue) = $print_<badWrapper>(badWrapperValue)
+
+dec $render_skips_bad(skipsBad) : text
+def $render_skips_bad(skipsBadValue) = $print_<skipsBad>(skipsBadValue)
+
+dec $render_flat_triple((nat, nat, nat)) : text
+def $render_flat_triple(flatTripleValue)
+  = $print_<(nat, nat, nat)>(flatTripleValue)
+
+dec $render_wrapper_triple(wrapper<(nat, nat, nat)>) : text
+def $render_wrapper_triple(wrapperTripleValue)
+  = $print_<wrapper<(nat, nat, nat)>>(wrapperTripleValue)
+
+dec $render_forwarded(forwarded) : text
+def $render_forwarded(forwardedValue) = $render<forwarded>(forwardedValue)
+
+dec $render_flat_triple_alias(flatTripleAlias) : text
+def $render_flat_triple_alias(flatTripleAliasValue)
+  = $print_<flatTripleAlias>(flatTripleAliasValue)
+
+dec $render_first_print(firstPrint) : text
+def $render_first_print(firstPrintValue)
+  = $print_<firstPrint>(firstPrintValue)
+
+dec $render_second_print(secondPrint) : text
+def $render_second_print(secondPrintValue)
+  = $print_<secondPrint>(secondPrintValue)
+
+dec $render_print_tree(printTree) : text
+def $render_print_tree(printTreeValue) = $print_<printTree>(printTreeValue)
+
+dec $render_triple_holder(tripleHolder) : text
+def $render_triple_holder(tripleHolderValue)
+  = $print_<tripleHolder>(tripleHolderValue)

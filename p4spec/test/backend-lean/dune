@@ -1,3 +1,8 @@
+(executable
+ (name print_diff)
+ (modules print_diff)
+ (libraries pass p4 runtime diagnostic util lang bignum.bigint))
+
 (rule
  (target tuple.lean)
  (deps tuple.watsup tuple-proof.lean)
@@ -85,3 +90,17 @@
   (diff
    decidable-eq-unsupported.expected
    decidable-eq-unsupported.actual)))
+
+(rule
+ (target print.lean)
+ (deps print.watsup print-proof.lean)
+ (action
+  (with-stdout-to print.lean
+   (progn
+    (run %{exe:../../lib/lean-skeleton/main.exe} %{dep:print.watsup})
+    (cat %{dep:print-proof.lean})))))
+
+(rule
+ (alias backend-lean)
+ (deps print.lean)
+ (action (run lean print.lean)))
