@@ -41,6 +41,11 @@ def main() -> None:
     for generated in (ordered, search):
         assert "namespace SpecTecEval" in generated
         assert "inductive Outcome" in generated
+        assert generated.count("structure EvalRulePlan") == 1
+        assert generated.count("def EvalRulePlan.Succeeds") == 1
+        assert generated.count("def EvalRulePlan.Fails") == 1
+        assert generated.count("inductive Selected") == 1
+        assert generated.count("inductive AllFailed") == 1
         assert "structure OutputSearchFailure" in generated
         assert "def MayContinue" in generated
         assert "mayContinue : position ∈ recoverable" in generated
@@ -70,8 +75,105 @@ def main() -> None:
     assert "«Candidate:eval:rule:0:succeeds» input output ∨" in candidate_selection
     assert "«Candidate:eval:rule:1:succeeds» input output" in candidate_selection
 
+    common_plan_proof = r'''
+namespace SpecTecEvalPlanTest
+open SpecTecEval
+
+private def emptyPlan : EvalRulePlan Nat Nat (fun input output => input = output) where
+  Witness := Nat
+  input := fun witness => witness
+  output := fun witness => witness
+  premises := fun _ => []
+  recoverable := []
+  publicSound := by
+    intro witness _
+    rfl
+
+example : emptyPlan.Succeeds 3 3 := by
+  change ∃ witness : Nat, 3 = witness ∧ 3 = witness ∧ Prefix []
+  exact ⟨3, rfl, rfl, trivial⟩
+
+private def dependentPlan : EvalRulePlan Unit Nat (fun _ _ => True) where
+  Witness := Sigma fun size : Nat => Fin (size + 1)
+  input := fun _ => ()
+  output := fun witness => witness.2.val
+  premises := fun witness => [witness.2.val < witness.1 + 1]
+  recoverable := [0]
+  publicSound := by
+    intro _ _
+    trivial
+
+example : dependentPlan.Succeeds () 0 := by
+  change ∃ witness : Sigma fun size : Nat => Fin (size + 1),
+    () = () ∧ 0 = witness.2.val ∧ Prefix [witness.2.val < witness.1 + 1]
+  exact ⟨⟨0, 0⟩, rfl, rfl, ⟨by decide, trivial⟩⟩
+
+private def zeroPlan : EvalRulePlan Nat Nat (fun _ _ => True) where
+  Witness := Unit
+  input := fun _ => 0
+  output := fun _ => 0
+  premises := fun _ => []
+  recoverable := []
+  publicSound := by intros; trivial
+
+private def onePlan : EvalRulePlan Nat Nat (fun _ _ => True) where
+  Witness := Unit
+  input := fun _ => 1
+  output := fun _ => 1
+  premises := fun _ => []
+  recoverable := []
+  publicSound := by intros; trivial
+
+private def zeroOnePlan : EvalRulePlan Nat Nat (fun _ _ => True) where
+  Witness := Unit
+  input := fun _ => 0
+  output := fun _ => 1
+  premises := fun _ => []
+  recoverable := []
+  publicSound := by intros; trivial
+
+private theorem zeroFailsAtOne : zeroPlan.Fails 1 := by
+  simp [EvalRulePlan.Fails, zeroPlan]
+
+private theorem zeroSucceedsAtZero : zeroPlan.Succeeds 0 0 := by
+  exact ⟨(), by simp [zeroPlan], by simp [zeroPlan], trivial⟩
+
+private theorem oneSucceedsAtOne : onePlan.Succeeds 1 1 := by
+  exact ⟨(), by simp [onePlan], by simp [onePlan], trivial⟩
+
+private theorem zeroOneSucceedsAtOne : zeroOnePlan.Succeeds 0 1 := by
+  exact ⟨(), by simp [zeroOnePlan], by simp [zeroOnePlan], trivial⟩
+
+private theorem zeroFailsAtTwo : zeroPlan.Fails 2 := by
+  simp [EvalRulePlan.Fails, zeroPlan]
+
+private theorem oneFailsAtTwo : onePlan.Fails 2 := by
+  simp [EvalRulePlan.Fails, onePlan]
+
+example : Selected .ordered [zeroPlan, onePlan] 1 1 := by
+  exact .laterOrdered zeroFailsAtOne (.here oneSucceedsAtOne)
+
+example : Selected .nondeterministic [zeroPlan, zeroOnePlan] 0 0 := by
+  exact .here zeroSucceedsAtZero
+
+example : Selected .nondeterministic [zeroPlan, zeroOnePlan] 0 1 := by
+  exact .laterNondeterministic (.here zeroOneSucceedsAtOne)
+
+example : AllFailed [zeroPlan, onePlan] 2 := by
+  exact AllFailed.cons zeroFailsAtTwo
+    (AllFailed.cons oneFailsAtTwo (AllFailed.nil 2))
+
+example (proof : Selected .ordered [zeroPlan, onePlan] 1 1) : True :=
+  proof.sound
+
+end SpecTecEvalPlanTest
+'''
+
     with tempfile.TemporaryDirectory(prefix="p4-ordered-eval-") as directory:
         root = Path(directory)
+        common = root / "CommonPlanProof.lean"
+        common.write_text(common_plan_proof)
+        check_lean(ordered, common, root / "CommonPlan.lean", succeeds=True)
         check_lean(ordered, args.ordered_proof, root / "Ordered.lean", succeeds=True)
         check_lean(search, args.search_proof, root / "Search.lean", succeeds=True)
         mutated = ordered.replace(

@@ -41,6 +41,78 @@ inductive RuleFailure (premises : List Prop) (recoverable : List Nat) : Prop whe
       (priorSuccess : Prefix (premises.take position))
       (refuted : failed → False) : RuleFailure premises recoverable
 
+inductive SelectionPolicy where
+  | ordered
+  | nondeterministic
+
+/-- The relation-specific data and public soundness certificate for one source
+    rule.  Dependent rule binders are hidden in `Witness`. -/
+structure EvalRulePlan (Input : Type u₁) (Output : Type u₂)
+    (Public : Input → Output → Prop) where
+  Witness : Type u₃
+  input : Witness → Input
+  output : Witness → Output
+  premises : Witness → List Prop
+  recoverable : List Nat
+  publicSound : ∀ witness, Prefix (premises witness) →
+    Public (input witness) (output witness)
+
+def EvalRulePlan.Succeeds {Input : Type u₁} {Output : Type u₂}
+    {Public : Input → Output → Prop}
+    (plan : EvalRulePlan Input Output Public)
+    (evalInput : Input) (evalOutput : Output) : Prop :=
+  ∃ witness, evalInput = plan.input witness ∧
+    evalOutput = plan.output witness ∧ Prefix (plan.premises witness)
+
+def EvalRulePlan.Fails {Input : Type u₁} {Output : Type u₂}
+    {Public : Input → Output → Prop}
+    (plan : EvalRulePlan Input Output Public) (evalInput : Input) : Prop :=
+  ∀ (evalOutput : Output) (witness : plan.Witness),
+    ¬ (evalInput = plan.input witness ∧ evalOutput = plan.output witness) ∨
+      RuleFailure (plan.premises witness) plan.recoverable
+
+theorem EvalRulePlan.Succeeds.sound {Input : Type u₁} {Output : Type u₂}
+    {Public : Input → Output → Prop}
+    {plan : EvalRulePlan Input Output Public} {evalInput : Input}
+    {evalOutput : Output} (proof : plan.Succeeds evalInput evalOutput) :
+    Public evalInput evalOutput := by
+  rcases proof with ⟨witness, inputEq, outputEq, premises⟩
+  subst evalInput
+  subst evalOutput
+  exact plan.publicSound witness premises
+
+/-- A certificate selecting one rule from a source-ordered plan list. -/
+inductive Selected {Input : Type u₁} {Output : Type u₂}
+    {Public : Input → Output → Prop} :
+    SelectionPolicy → List (EvalRulePlan Input Output Public) →
+      Input → Output → Prop where
+  | here {policy plan rest input output} :
+      plan.Succeeds input output →
+      Selected policy (plan :: rest) input output
+  | laterNondeterministic {plan rest input output} :
+      Selected .nondeterministic rest input output →
+      Selected .nondeterministic (plan :: rest) input output
+  | laterOrdered {plan rest input output} :
+      plan.Fails input → Selected .ordered rest input output →
+      Selected .ordered (plan :: rest) input output
+
+theorem Selected.sound {Input : Type u₁} {Output : Type u₂}
+    {Public : Input → Output → Prop} {policy plans input output}
+    (proof : @Selected Input Output Public policy plans input output) :
+    Public input output := by
+  induction proof with
+  | here success => exact success.sound
+  | laterNondeterministic _ sound => exact sound
+  | laterOrdered _ _ sound => exact sound
+
+/-- Every rule has a recoverable failure certificate for this input. -/
+inductive AllFailed {Input : Type u₁} {Output : Type u₂}
+    {Public : Input → Output → Prop} :
+    List (EvalRulePlan Input Output Public) → Input → Prop where
+  | nil (input) : AllFailed [] input
+  | cons {plan rest input} :
+      plan.Fails input → AllFailed rest input → AllFailed (plan :: rest) input
+
 /-- Failure of a call whose output was not fixed is universal over candidates. -/
 structure OutputSearchFailure (Output : Type u₁) (succeeds : Output → Prop) where
   noSuccess : ∀ output, ¬ succeeds output
