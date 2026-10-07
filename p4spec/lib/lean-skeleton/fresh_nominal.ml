@@ -9,6 +9,8 @@ set_option autoImplicit false
 
 namespace SpecTecFresh
 
+def freshText (n : Nat) : String := "FRESH__" ++ Nat.repr n
+
 /-- A static allocation point.  Dynamic call and iteration positions live in
     `FreshId.path`, rather than in a program-wide counter. -/
 structure Site where
@@ -33,6 +35,7 @@ deriving DecidableEq, Repr
 structure Supply where
   path : List Nat
   used : List FreshId
+  assigned : List (FreshId × Nat) := []
   rendered : List (FreshId × String) := []
   protectedNames : List String
 deriving Repr
@@ -55,11 +58,12 @@ def Supply.allocate (site : Site) (supply : Supply) : FreshName × Supply :=
   (.allocated fresh, { supply with used := fresh :: supply.used })
 
 /-- Record the concrete spelling selected for a new nominal identity. -/
-def Supply.record (site : Site) (supply : Supply) (output : String) : Supply :=
+def Supply.record (site : Site) (supply : Supply) (number : Nat) : Supply :=
   let fresh := supply.nextId site
   { supply with
     used := fresh :: supply.used
-    rendered := (fresh, output) :: supply.rendered }
+    assigned := (fresh, number) :: supply.assigned
+    rendered := (fresh, freshText number) :: supply.rendered }
 
 /-- Record another spelling derived from an already allocated identity. -/
 def Supply.recordDerived (supply : Supply) (fresh : FreshId)
@@ -68,18 +72,35 @@ def Supply.recordDerived (supply : Supply) (fresh : FreshId)
 
 /-- Allocation is globally fresh for this execution and avoids every ordinary
     name collected at the public entry point. -/
-inductive Allocates (site : Site) (before : Supply) (output : String) :
-    Supply → Prop where
-  | record
-      (notProtected : output ∉ before.protectedNames)
-      (notRendered : ∀ entry ∈ before.rendered, entry.2 ≠ output) :
-      Allocates site before output (before.record site output)
+inductive Allocates (site : Site) (before : Supply) :
+    String → Supply → Prop where
+  | record (number : Nat)
+      (newId : before.nextId site ∉ before.used)
+      (unassigned : before.nextId site ∉ before.assigned.map Prod.fst)
+      (notProtected : freshText number ∉ before.protectedNames)
+      (notRendered : ∀ entry ∈ before.rendered,
+        entry.2 ≠ freshText number) :
+      Allocates site before (freshText number) (before.record site number)
+
+theorem Allocates.newAssignment {site before output after}
+    (proof : Allocates site before output after) (previous : Nat)
+    (member : (before.nextId site, previous) ∈ before.assigned) : False := by
+  cases proof with
+  | record _ _ unassigned _ _ =>
+      apply unassigned
+      exact List.mem_map_of_mem member
+
+theorem Allocates.numeric {site before output after}
+    (proof : Allocates site before output after) :
+    ∃ number, output = freshText number := by
+  cases proof with
+  | record number _ _ _ _ => exact ⟨number, rfl⟩
 
 theorem Allocates.output_ne_protected {site before output after}
     (proof : Allocates site before output after) {ordinary : String}
     (member : ordinary ∈ before.protectedNames) : output ≠ ordinary := by
   cases proof with
-  | record notProtected _ =>
+  | record _ _ _ notProtected _ =>
       intro equal
       subst ordinary
       exact notProtected member
@@ -89,7 +110,7 @@ theorem Allocates.output_ne_existing {site before output after}
     {existing : String} (member : (fresh, existing) ∈ before.rendered) :
     output ≠ existing := by
   cases proof with
-  | record _ notRendered =>
+  | record _ _ _ _ notRendered =>
       intro equal
       exact notRendered (fresh, existing) member equal.symm
 
@@ -98,6 +119,14 @@ theorem Allocates.recorded {site before output after}
     (before.nextId site, output) ∈ after.rendered := by
   cases proof
   simp [Supply.record]
+
+theorem Allocates.assigned {site before output after}
+    (proof : Allocates site before output after) :
+    ∃ number, (before.nextId site, number) ∈ after.assigned ∧
+      output = freshText number := by
+  cases proof with
+  | record number _ _ _ _ =>
+      exact ⟨number, by simp [Supply.record], rfl⟩
 
 /-- A rendering-sensitive constructor may add a spelling only when it is
     linked to an existing identity and preserves the same collision boundary. -/
@@ -147,6 +176,9 @@ theorem FreshName.ordinary_ne_allocated (name : String) (fresh : FreshId) :
     protected ordinary spelling and be injective over allocated identities. -/
 structure Rendering (supply : Supply) where
   render : FreshId → String
+  numeric : ∀ fresh, ∃ number, render fresh = freshText number
+  agreesAssigned : ∀ fresh number,
+    (fresh, number) ∈ supply.assigned → render fresh = freshText number
   avoidsProtected : ∀ fresh, fresh ∈ supply.used →
     render fresh ∉ supply.protectedNames
   injectiveOnUsed : ∀ left, left ∈ supply.used → ∀ right,
@@ -163,11 +195,17 @@ theorem FreshName.rendered_fresh_avoids_protected {supply : Supply}
     FreshName.renderWith rendering (.allocated fresh) ∉ supply.protectedNames :=
   rendering.avoidsProtected fresh
 
-/-- The public string relation deliberately exposes only the condition that a
-    renderer was supplied.  Concrete numeric suffixes are not semantic. -/
+/-- Public allocation has a numeric spelling, while the particular number
+    remains a relational choice subject to the supply's collision checks. -/
 def Allocated (output : String) : Prop :=
   ∃ (supply : Supply) (rendering : Rendering supply) (fresh : FreshId),
     fresh ∈ supply.used ∧ rendering.render fresh = output
+
+theorem Allocated.numeric {output : String} (proof : Allocated output) :
+    ∃ number, output = freshText number := by
+  rcases proof with ⟨_, rendering, fresh, _, equal⟩
+  rcases rendering.numeric fresh with ⟨number, rendered⟩
+  exact ⟨number, equal.symm.trans rendered⟩
 
 def AllocatedAt (site : Site) (path : List Nat) (output : String) : Prop :=
   ∃ (supply : Supply) (rendering : Rendering supply) (occurrence : Nat),
@@ -182,12 +220,14 @@ theorem AllocatedAt.toAllocated {site : Site} {path : List Nat}
   exact ⟨supply, rendering, { site, path, occurrence }, used, outputEqual⟩
 
 def singletonSupply (site : Site) (path : List Nat) (occurrence : Nat) : Supply :=
-  { path, used := [{ site, path, occurrence }], rendered := [],
+  { path, used := [{ site, path, occurrence }], assigned := [], rendered := [],
     protectedNames := [] }
 
 def singletonRendering (site : Site) (path : List Nat) (occurrence : Nat)
-    (output : String) : Rendering (singletonSupply site path occurrence) where
-  render := fun _ => output
+    (number : Nat) : Rendering (singletonSupply site path occurrence) where
+  render := fun _ => freshText number
+  numeric := by intro _; exact ⟨number, rfl⟩
+  agreesAssigned := by simp [singletonSupply]
   avoidsProtected := by simp [singletonSupply]
   injectiveOnUsed := by
     intro left leftUsed right rightUsed equal
@@ -195,10 +235,10 @@ def singletonRendering (site : Site) (path : List Nat) (occurrence : Nat)
     exact leftUsed.trans rightUsed.symm
 
 theorem allocatedAt_of_text (site : Site) (path : List Nat) (occurrence : Nat)
-    (output : String) : AllocatedAt site path output := by
+    (number : Nat) : AllocatedAt site path (freshText number) := by
   let fresh : FreshId := { site, path, occurrence }
   exact ⟨singletonSupply site path occurrence,
-    singletonRendering site path occurrence output, occurrence,
+    singletonRendering site path occurrence number, occurrence,
     rfl, by simp [singletonSupply], rfl⟩
 
 inductive BranchResult (α : Type) (Error : Type) (Feature : Type) where

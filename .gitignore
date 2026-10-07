@@ -22,6 +22,9 @@ debug
 # Local Lean case-proof experiments and measurements
 /docs/superpowers/plans/2026-10-05-lean-cases-0-1-5.md
 /p4spec/test/backend-lean/experiments/cases-0-1-5/
+/p4spec/test/backend-lean/experiments/random-cases/
+/docs/superpowers/evidence/*/Case*.lean
+/docs/superpowers/evidence/*/RandomCases.lean
 
 # MacOS
 *.DS_Store

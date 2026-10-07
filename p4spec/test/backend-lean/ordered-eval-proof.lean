@@ -1,4 +1,11 @@
 namespace SpecTec
+private abbrev «$ordered:eval:rule:0:plan» := («$ordered».evalRules[0]'(by decide))
+private abbrev «$ordered:regular:eval:rule:0:plan» := («$ordered:regular».evalRules[0]'(by decide))
+private abbrev «$ordered:regular:eval:rule:1:plan» := («$ordered:regular».evalRules[1]'(by decide))
+private abbrev «$ordered:regular:eval:rule:2:plan» := («$ordered:regular».evalRules[2]'(by decide))
+private abbrev «Gate:eval:rule:0:plan» := (Gate.evalRules[0]'(by decide))
+
+attribute [local simp] SpecTecPlan.evaluator SpecTecPlan.Alternative.toEvalRule SpecTecPlan.Plan.compile SpecTecPlan.Plan.premises SpecTecPlan.Plan.Witness SpecTecPlan.ExternalSignature.selected «Gate:Semantics».rule_0_plan «$ordered:regular:Semantics».rule_0_plan «$ordered:regular:Semantics».rule_1_plan «$ordered:regular:Semantics».rule_2_plan «$ordered:enabled:Semantics».rule_0_plan «$ordered:enabled:Semantics».rule_1_plan «$ordered:enabled:Semantics».rule_2_plan «$ordered:Semantics».rule_0_plan «$ordered:Semantics».rule_1_plan «PositiveLoop:Semantics».rule_0_plan «NegativeLoop:Semantics».rule_0_plan «$generic_option:Semantics».rule_0_plan «$generic_option:Semantics».rule_1_plan «$flatten_shadowList:Semantics».rule_0_plan «$flatten_shadowList:Semantics».rule_1_plan Gate.evaluator «$ordered:regular».evaluator «$ordered».evaluator PositiveLoop.evaluator NegativeLoop.evaluator «$generic_option».evaluator «$flatten_shadowList».evaluator Gate.evalRules «$ordered:regular».evalRules «$ordered».evalRules PositiveLoop.evalRules NegativeLoop.evalRules «$generic_option».evalRules «$flatten_shadowList».evalRules
 
 private instance valueBoundary :
     SpecTecEval.Boundary value String String where
@@ -7,29 +14,33 @@ private instance valueBoundary :
 
 private theorem regular_rule0_mismatch :
     «$ordered:regular:eval:rule:0:plan».Fails (.WRAP .ZERO) := by
-  simp [SpecTecEval.EvalRulePlan.Fails,
-    «$ordered:regular:eval:rule:0:plan»]
+  intro output witness
+  left
+  intro matched
+  cases witness
+  cases matched
 
 private theorem gate_one_refuted : ¬ Gate.evalSelected .ONE () := by
   intro selected
   cases selected with
   | here succeeded =>
       simp [SpecTecEval.EvalRulePlan.Succeeds,
-        «Gate:eval:rule:0:plan»] at succeeded
+        «Gate:eval:rule:0:plan», SpecTecPlan.Alternative.toEvalRule,
+    «Gate:Semantics».rule_0_plan,
+    SpecTecPlan.Plan.compile, SpecTecPlan.Plan.Witness] at succeeded
   | laterNondeterministic remaining => cases remaining
 
 private theorem regular_rule1_recoverable :
     «$ordered:regular:eval:rule:1:plan».Fails
       (value.WRAP value.ZERO) := by
-  simp only [SpecTecEval.EvalRulePlan.Fails,
-    «$ordered:regular:eval:rule:1:plan»]
   intro output witness
-  rcases witness with ⟨v, _⟩
-  by_cases matched :
-      (value.WRAP value.ZERO = value.WRAP v ∧ output = value.ZERO)
+  rcases witness with ⟨v, rest⟩
+  cases rest
+  by_cases matched : «$ordered:regular:eval:rule:1:plan».accepts
+      ⟨v, ()⟩ (value.WRAP value.ZERO) output
   · right
     exact SpecTecEval.RuleFailure.at 0 (Gate.evalSelected .ONE ())
-      (by rfl) (by simp [«$ordered:regular:eval:rule:1:plan»])
+      (by rfl) (by decide)
       (by trivial) gate_one_refuted
   · exact Or.inl matched
 
@@ -40,7 +51,7 @@ theorem ordered_same_pattern_success :
   apply SpecTecEval.Selected.laterOrdered regular_rule0_mismatch
   apply SpecTecEval.Selected.laterOrdered regular_rule1_recoverable
   apply SpecTecEval.Selected.here
-  exact ⟨⟨.ZERO, ()⟩, by rfl, by rfl, trivial⟩
+  exact ⟨⟨.ZERO, ()⟩, by rfl, trivial⟩
 
 theorem ordered_success_evaluates :
     «$ordered:regular».eval 1 (.WRAP .ZERO) (.success .ONE) := by
@@ -56,33 +67,41 @@ private theorem regular_one_has_no_output :
   cases selected with
   | here first =>
       simp [SpecTecEval.EvalRulePlan.Succeeds,
-        «$ordered:regular:eval:rule:0:plan»] at first
+        «$ordered:regular:eval:rule:0:plan», SpecTecPlan.Alternative.toEvalRule,
+    «$ordered:regular:Semantics».rule_0_plan,
+    SpecTecPlan.Plan.compile, SpecTecPlan.Plan.Witness] at first
   | laterOrdered _ remaining =>
       cases remaining with
       | here second =>
           simp [SpecTecEval.EvalRulePlan.Succeeds,
-            «$ordered:regular:eval:rule:1:plan»] at second
+            «$ordered:regular:eval:rule:1:plan», SpecTecPlan.Alternative.toEvalRule,
+    «$ordered:regular:Semantics».rule_1_plan,
+    SpecTecPlan.Plan.compile, SpecTecPlan.Plan.Witness] at second
       | laterOrdered _ remaining =>
           cases remaining with
           | here third =>
               simp [SpecTecEval.EvalRulePlan.Succeeds,
-                «$ordered:regular:eval:rule:2:plan»] at third
+                «$ordered:regular:eval:rule:2:plan», SpecTecPlan.Alternative.toEvalRule,
+    «$ordered:regular:Semantics».rule_2_plan,
+    SpecTecPlan.Plan.compile, SpecTecPlan.Plan.Witness] at third
           | laterOrdered _ impossible => cases impossible
 
 private theorem public_regular_rule_failed :
     «$ordered:eval:rule:0:plan».Fails .ONE := by
-  simp only [SpecTecEval.EvalRulePlan.Fails,
-    «$ordered:eval:rule:0:plan»]
   intro output witness
-  rcases witness with ⟨argumentInput, ⟨argumentOutput, _⟩⟩
-  by_cases matched : (.ONE = argumentInput ∧ output = argumentOutput)
+  rcases witness with ⟨argumentInput, ⟨argumentOutput, rest⟩⟩
+  cases rest
+  by_cases matched : «$ordered:eval:rule:0:plan».accepts
+      ⟨argumentInput, ⟨argumentOutput, ()⟩⟩ .ONE output
   · right
-    rcases matched with ⟨inputEq, outputEq⟩
+    have equal : argumentInput = .ONE ∧ argumentOutput = output :=
+      «$ordered:Semantics».Atom.«$ordered».inj matched
+    rcases equal with ⟨inputEq, outputEq⟩
     subst argumentInput
     subst argumentOutput
     exact SpecTecEval.RuleFailure.at 0
       («$ordered:regular».evalSelected .ONE output)
-      (by rfl) (by simp [«$ordered:eval:rule:0:plan»])
+      (by rfl) (by decide)
       (by trivial) (regular_one_has_no_output output)
   · exact Or.inl matched
 
@@ -90,7 +109,8 @@ private theorem enabled_one_fails : «$ordered:enabled».fails .ONE := by
   intro upper
   obtain ⟨rule, member, head, side, positive, negative⟩ :=
     SpecTecWFS.Derives.cases upper
-  cases member <;> cases head
+  rcases member with ⟨alternative, member, witness, rfl⟩
+  cases member <;> cases witness <;> cases head
 
 /-- The otherwise branch is selected only after the ordinary wrapper has a
     universal recoverable-failure certificate for the input. -/
@@ -98,7 +118,7 @@ theorem otherwise_after_all_regular_fail :
     «$ordered».evalSelected .ONE .ONE := by
   apply SpecTecEval.Selected.laterOrdered public_regular_rule_failed
   apply SpecTecEval.Selected.here
-  exact ⟨⟨.ONE, ()⟩, by rfl, by rfl,
+  exact ⟨⟨.ONE, ()⟩, by rfl,
     ⟨enabled_one_fails, trivial⟩⟩
 
 example : «$ordered» .ONE .ONE :=
@@ -134,7 +154,7 @@ private theorem negative_loop_lower_absent :
     | _ => True
   have gammaSelf : SpecTecWFS.gamma «NegativeLoop:Semantics».InProgram
       interpretation («NegativeLoop:Semantics».Atom.NegativeLoop .ZERO) :=
-    SpecTecWFS.Derives.rule _ «NegativeLoop:Semantics».InProgram.rule_0
+    SpecTecWFS.Derives.rule _ («NegativeLoop:Semantics».InProgram.rule_0 ())
       trivial trivial ⟨by simp [interpretation], trivial⟩
   have closed : ∀ rule, «NegativeLoop:Semantics».InProgram rule → rule.side →
       SpecTecWFS.All interpretation rule.positive →
@@ -143,7 +163,9 @@ private theorem negative_loop_lower_absent :
           «NegativeLoop:Semantics».InProgram interpretation atom)
         rule.negative → interpretation rule.head := by
     intro rule member side positive negative
-    cases member <;> simp_all [interpretation, SpecTecWFS.All]
+    rcases member with ⟨alternative, member, witness, rfl⟩
+    cases member <;> cases witness <;> simp_all [interpretation, SpecTecWFS.All,
+      «NegativeLoop:Semantics».rule_0_plan, SpecTecPlan.Plan.compile]
   have prefixed : ∀ atom,
       SpecTecWFS.alternating «NegativeLoop:Semantics».InProgram
         interpretation atom → interpretation atom := by
@@ -155,7 +177,7 @@ private theorem negative_loop_lower_absent :
 private theorem negative_loop_upper :
     SpecTecWFS.upper «NegativeLoop:Semantics».InProgram
       («NegativeLoop:Semantics».Atom.NegativeLoop .ZERO) :=
-  SpecTecWFS.Derives.rule _ «NegativeLoop:Semantics».InProgram.rule_0
+  SpecTecWFS.Derives.rule _ («NegativeLoop:Semantics».InProgram.rule_0 ())
     trivial trivial ⟨negative_loop_lower_absent, trivial⟩
 
 private theorem negative_loop_undetermined : NegativeLoop.undetermined .ZERO :=

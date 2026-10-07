@@ -3,6 +3,7 @@
 
 import argparse
 from pathlib import Path
+import re
 import subprocess
 import tempfile
 
@@ -36,6 +37,19 @@ def main() -> None:
     parser.add_argument("--search-proof", type=Path, required=True)
     args = parser.parse_args()
 
+    # A lexical value can shadow a type used by a later initial binder.
+    # This is separate from staged call outputs in the ordered fixture.
+    with tempfile.TemporaryDirectory(prefix="p4-plan-shadow-") as directory:
+        root = Path(directory)
+        source = root / "shadow.watsup"
+        source.write_text("syntax shadow = SHADOW\nvar ss : shadow*\n"
+                          "dec $shadow_later(shadow, shadow*) : bool\n"
+                          "def $shadow_later(shadow, ss) = true\n")
+        generated = translate(args.exe, source)
+        proof = root / "proof.lean"
+        proof.write_text("")
+        check_lean(generated, proof, root / "Shadow.lean", succeeds=True)
+
     ordered = translate(args.exe, args.ordered)
     search = translate(args.exe, args.search)
     for generated in (ordered, search):
@@ -52,12 +66,28 @@ def main() -> None:
         assert "OrderedFailures" not in generated
         for legacy in (":premises»", ":recoverable»", ":succeeds»", ":failed»", ":sound»"):
             assert legacy not in generated, f"legacy rule-flow declaration remains: {legacy}"
-    assert "def «$ordered:regular:eval:rule:0:plan»" in ordered
-    assert "def «$ordered:regular:eval:rule:1:plan»" in ordered
-    assert "def «$ordered:regular:eval:rule:2:plan»" in ordered
-    assert "def Candidate.evalRules" in search
-    assert "SpecTecEval.Selected .nondeterministic (Candidate.evalRules)" in search
-    assert len(ordered.encode()) < 87_000, "reified ordered fixture grew past its measured budget"
+    ordered_component = ordered.split("namespace «$ordered:Semantics»", 1)[1].split(
+        "end «$ordered:Semantics»", 1
+    )[0]
+    assert "sourceIndex := 0, recoverable := [0]" in ordered_component
+    assert "abbrev Candidate.evalRules" in search
+    assert "SpecTecPlan.evaluator «Candidate:Semantics».Allowed" in search
+    # Inversion proofs live in separate modules and have their own source
+    # budget; this bound tracks the semantics and evaluator output.
+    without_inversion = re.sub(
+        r"(?ms)^-- SpecTecModule:inv:begin:\d+\n.*?"
+        r"^-- SpecTecModule:inv:end:\d+\n", "", ordered)
+    assert without_inversion != ordered
+    plan_start = without_inversion.index("namespace SpecTecPlan")
+    plan_end = without_inversion.index("end SpecTecPlan", plan_start) + len("end SpecTecPlan")
+    shared_plan = without_inversion[plan_start:plan_end]
+    without_shared_plan = without_inversion[:plan_start] + without_inversion[plan_end:]
+    # Public certificate wrappers add one theorem per relation; track their
+    # source growth separately from the generic checker implementation.
+    assert len(without_shared_plan.encode()) < 96_000, \
+        "reified ordered fixture grew past its measured budget outside the new core"
+    assert len(shared_plan.encode()) < 40_000, \
+        "shared typed-plan core grew past its separate budget"
     assert "abbrev «$ordered».eval" in ordered
     assert "theorem «$ordered».success_sound" not in ordered
     assert "theorem «$ordered».ruleFailure_sound" not in ordered
@@ -71,17 +101,17 @@ def main() -> None:
     assert ":eval:rule:2:prefix:" not in ordered
     assert "abbrev «$ordered:regular».evalSelected" in ordered
     assert "def «$ordered:enabled».evaluator" not in ordered
-    assert "SpecTecEval.Selected .ordered («$ordered:regular».evalRules)" in ordered
-    assert "«$ordered:regular».evalSelected «arg:0» «arg:1»" in ordered
-    assert "«$generic_option:eval:rule:0:plan» (X_T := X_T)" in ordered
-    assert "(shadow : SpecTec.shadow) («eval:0» : (_root_.List SpecTec.shadow))" in ordered
+    assert "SpecTecPlan.evaluator «$ordered:regular:Semantics».Allowed" in ordered
+    assert "«$ordered:regular».externalSignature" in ordered
+    assert "«$generic_option:Semantics».rule_0_plan (X_T := X_T)" in ordered
+    assert "(shadow : SpecTec.shadow)" in ordered
     assert "abbrev Search.eval" in search
     assert "theorem Search.ruleFailure_sound" not in search
-    assert "Candidate.evalSelected n candidate" in search
+    assert "Candidate.externalSignature" in search
     candidate_selection = search.split("abbrev Candidate.evalSelected", 1)[1].split(
         "theorem Candidate.selected_sound", 1
     )[0]
-    assert "SpecTecEval.Selected .nondeterministic (Candidate.evalRules)" in candidate_selection
+    assert "(Candidate.evaluator).Selected" in candidate_selection
     assert " ∨" not in candidate_selection
 
     common_plan_proof = r'''
@@ -90,53 +120,48 @@ open SpecTecEval
 
 private def emptyPlan : EvalRulePlan Nat Nat (fun input output => input = output) where
   Witness := Nat
-  input := fun witness => witness
-  output := fun witness => witness
+  accepts := fun witness input output => input = witness ∧ output = witness
   premises := fun _ => []
   recoverable := []
   publicSound := by
-    intro witness _
+    rintro witness input output ⟨rfl, rfl⟩ _
     rfl
 
 example : emptyPlan.Succeeds 3 3 := by
-  change ∃ witness : Nat, 3 = witness ∧ 3 = witness ∧ Prefix []
-  exact ⟨3, rfl, rfl, trivial⟩
+  change ∃ witness : Nat, (3 = witness ∧ 3 = witness) ∧ Prefix []
+  exact ⟨3, ⟨rfl, rfl⟩, trivial⟩
 
 private def dependentPlan : EvalRulePlan Unit Nat (fun _ _ => True) where
   Witness := Sigma fun size : Nat => Fin (size + 1)
-  input := fun _ => ()
-  output := fun witness => witness.2.val
+  accepts := fun witness input output => input = () ∧ output = witness.2.val
   premises := fun witness => [witness.2.val < witness.1 + 1]
   recoverable := [0]
   publicSound := by
-    intro _ _
+    intros
     trivial
 
 example : dependentPlan.Succeeds () 0 := by
   change ∃ witness : Sigma fun size : Nat => Fin (size + 1),
-    () = () ∧ 0 = witness.2.val ∧ Prefix [witness.2.val < witness.1 + 1]
-  exact ⟨⟨0, 0⟩, rfl, rfl, ⟨by decide, trivial⟩⟩
+    (() = () ∧ 0 = witness.2.val) ∧ Prefix [witness.2.val < witness.1 + 1]
+  exact ⟨⟨0, 0⟩, ⟨rfl, rfl⟩, ⟨by decide, trivial⟩⟩
 
 private def zeroPlan : EvalRulePlan Nat Nat (fun _ _ => True) where
   Witness := Unit
-  input := fun _ => 0
-  output := fun _ => 0
+  accepts := fun _ input output => input = 0 ∧ output = 0
   premises := fun _ => []
   recoverable := []
   publicSound := by intros; trivial
 
 private def onePlan : EvalRulePlan Nat Nat (fun _ _ => True) where
   Witness := Unit
-  input := fun _ => 1
-  output := fun _ => 1
+  accepts := fun _ input output => input = 1 ∧ output = 1
   premises := fun _ => []
   recoverable := []
   publicSound := by intros; trivial
 
 private def zeroOnePlan : EvalRulePlan Nat Nat (fun _ _ => True) where
   Witness := Unit
-  input := fun _ => 0
-  output := fun _ => 1
+  accepts := fun _ input output => input = 0 ∧ output = 1
   premises := fun _ => []
   recoverable := []
   publicSound := by intros; trivial
@@ -145,13 +170,13 @@ private theorem zeroFailsAtOne : zeroPlan.Fails 1 := by
   simp [EvalRulePlan.Fails, zeroPlan]
 
 private theorem zeroSucceedsAtZero : zeroPlan.Succeeds 0 0 := by
-  exact ⟨(), by simp [zeroPlan], by simp [zeroPlan], trivial⟩
+  exact ⟨(), by simp [zeroPlan], trivial⟩
 
 private theorem oneSucceedsAtOne : onePlan.Succeeds 1 1 := by
-  exact ⟨(), by simp [onePlan], by simp [onePlan], trivial⟩
+  exact ⟨(), by simp [onePlan], trivial⟩
 
 private theorem zeroOneSucceedsAtOne : zeroOnePlan.Succeeds 0 1 := by
-  exact ⟨(), by simp [zeroOnePlan], by simp [zeroOnePlan], trivial⟩
+  exact ⟨(), by simp [zeroOnePlan], trivial⟩
 
 private theorem zeroFailsAtTwo : zeroPlan.Fails 2 := by
   simp [EvalRulePlan.Fails, zeroPlan]

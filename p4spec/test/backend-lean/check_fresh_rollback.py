@@ -19,7 +19,32 @@ def main() -> None:
         capture_output=True, text=True,
     )
     assert translated.returncode == 0, translated.stdout + translated.stderr
+    local = subprocess.run([executable, str(source)], capture_output=True, text=True)
+    assert local.returncode == 0, local.stdout + local.stderr
+    supply_component = local.stdout.split(
+        "namespace «$fresh_typeIds:supply:Semantics»", 1
+    )[1].split("end «$fresh_typeIds:supply:Semantics»", 1)[0]
+    assert "SpecTecPlan.Plan.bindCall" in supply_component
     with tempfile.TemporaryDirectory(prefix="p4-fresh-rollback-") as directory:
+        multiple = subprocess.run(
+            [executable, str(args.fixtures / "multi-output-plan.watsup")],
+            capture_output=True, text=True,
+        )
+        assert multiple.returncode == 0, multiple.stdout + multiple.stderr
+        assert "SpecTecPlan.Plan.bindExternal" in multiple.stdout
+        assert "SpecTecPlan.Plan.bindExternal" in multiple.stdout
+        assert "SpecTecPlan.Plan.externalKnown" in multiple.stdout
+        assert "SpecTecPlan.Plan.externalNegative" in multiple.stdout
+        multiple_target = Path(directory) / "multi-output-plan.lean"
+        multiple_target.write_text(multiple.stdout)
+        multiple_proof = subprocess.run(
+            ["lean", "-j", "2", str(multiple_target)],
+            capture_output=True, text=True, timeout=120,
+        )
+        assert multiple_proof.returncode == 0, \
+            multiple_proof.stdout + multiple_proof.stderr
+        assert "sorry" not in multiple_proof.stdout
+
         target = Path(directory) / "fresh-rollback.lean"
         target.write_text(
             translated.stdout + "\n"

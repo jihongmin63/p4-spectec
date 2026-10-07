@@ -28,6 +28,10 @@ def main():
     assert "SpecTecFresh.Allocates" in generated
     assert "SpecTecFresh.Derives" in generated
     assert "Program_ok:supply" in generated
+    fresh_component = generated.split("namespace «$fresh_typeId:supply:Semantics»", 1)[1].split(
+        "end «$fresh_typeId:supply:Semantics»", 1
+    )[0]
+    assert "SpecTecPlan.Plan.bindFresh" in fresh_component
     for relation in ("Program_ok", "Context_ok", "ExternalContext_ok"):
         collector = "FreshProtectedRelation_" + hashlib.md5(
             relation.encode()
@@ -42,6 +46,7 @@ def main():
         target.write_text(generated + "\n" + args.proof.read_text())
         checked = run(["lean", "-j", "2", str(target)])
         assert checked.returncode == 0, checked.stdout + checked.stderr
+        assert "'SpecTecFresh.Allocates.numeric' depends on axioms: [propext]" in checked.stdout, checked.stdout
 
     print("fresh supply: dynamic paths, protected inputs, and concat provenance checked")
 

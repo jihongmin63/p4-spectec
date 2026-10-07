@@ -35,7 +35,7 @@ def main() -> None:
     assert "def «$nominal_pair:supply».evalSelected" not in generated
     assert "fresh:counter" not in generated
     assert "$fresh_typeId:state" not in generated
-    assert '"FRESH__" ++' not in generated
+    assert 'def freshText (n : Nat) : String := "FRESH__" ++ Nat.repr n' in generated
 
     with tempfile.TemporaryDirectory(prefix="p4-fresh-nominal-") as directory:
         root = Path(directory)
@@ -43,6 +43,7 @@ def main() -> None:
         target.write_text(generated + "\n" + args.proof.read_text())
         checked = run(["lean", "-j", "2", str(target)])
         assert checked.returncode == 0, checked.stdout + checked.stderr
+        assert "'SpecTecFresh.Allocated.numeric' depends on axioms: [propext]" in checked.stdout, checked.stdout
 
         alpha = run([exe, str(args.alpha)])
         assert alpha.returncode == 0, alpha.stdout + alpha.stderr
