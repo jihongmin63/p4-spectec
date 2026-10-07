@@ -1,0 +1,99 @@
+syntax typeId = text
+builtin dec $fresh_typeId() : typeId
+var n : nat
+var temp : typeId
+var output : typeId
+
+dec $otherwise_plain(nat) : typeId
+def $otherwise_plain(0) = "zero"
+def $otherwise_plain(n) = $fresh_typeId()
+  -- otherwise
+
+dec $otherwise_effectful() : typeId
+def $otherwise_effectful() = "unreachable"
+  -- if $fresh_typeId() = "never"
+def $otherwise_effectful() = $fresh_typeId()
+  -- otherwise
+
+dec $otherwise_unvisited() : typeId
+def $otherwise_unvisited() = $fresh_typeId()
+  -- if false
+def $otherwise_unvisited() = "fallback"
+  -- otherwise
+
+dec $pattern(typeId*) : typeId
+def $pattern(temp*) = $fresh_typeId()
+  -- if temp_head :: temp_tail* = temp*
+def $pattern(temp*) = "empty"
+  -- if temp* = eps
+
+dec $pattern_after_fresh() : typeId
+def $pattern_after_fresh() = "unreachable"
+  -- if temp = $fresh_typeId()
+  -- if temp_head :: temp_tail* = eps
+def $pattern_after_fresh() = $fresh_typeId()
+
+relation Ordered:
+  |- typeId : nat : typeId
+  hint(input %1)
+rule Ordered/bad:
+  |- $fresh_typeId() : n : $fresh_typeId()
+  -- if false
+rule Ordered/good:
+  |- $fresh_typeId() : n : $fresh_typeId()
+
+relation Guarded:
+  |- nat : typeId
+  hint(input %0)
+rule Guarded/good:
+  |- n : $fresh_typeId()
+  -- if temp = $fresh_typeId()
+
+dec $generic_pattern<X>(X*) : typeId
+def $generic_pattern<X>(X*) = $fresh_typeId()
+  -- if X_head :: X_tail* = X*
+def $generic_pattern<X>(X*) = "empty"
+  -- if X* = eps
+
+relation Grouped: |- nat : typeId
+  hint(input %0)
+rulegroup Grouped/main {
+rule Grouped/fallback:
+  |- 0 : "zero"
+}
+rule Grouped/fallback:
+  |- n : $fresh_typeId()
+  -- otherwise
+
+;; Distinct call inputs keep these guards separate in the SL interpreter.
+dec $tagged_fresh(nat) : typeId
+def $tagged_fresh(n) = $fresh_typeId()
+
+dec $after_three() : typeId
+def $after_three() = "unreachable"
+  -- if $tagged_fresh(0) = "never0"
+def $after_three() = "unreachable"
+  -- if $tagged_fresh(1) = "never1"
+def $after_three() = "unreachable"
+  -- if $tagged_fresh(2) = "never2"
+def $after_three() = $fresh_typeId()
+
+relation RejectFresh: |- nat
+  hint(input %0)
+rule RejectFresh/first:
+  |- n
+  -- if $tagged_fresh(0) = "never0"
+rule RejectFresh/second:
+  |- n
+  -- if $tagged_fresh(1) = "never1"
+
+dec $after_all_failed() : typeId
+def $after_all_failed() = "unreachable"
+  -- RejectFresh: |- 0
+def $after_all_failed() = $fresh_typeId()
+
+;; Repeating an input variable constrains equality and may fail to match.
+dec $diagonal(nat, nat) : typeId
+def $diagonal(n, n) = "same"
+def $diagonal(n, n') = $fresh_typeId()
+  -- if n =/= n'

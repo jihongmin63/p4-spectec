@@ -1,0 +1,33 @@
+syntax typeId = text
+builtin dec $fresh_typeId() : typeId
+var n : nat
+var temp : typeId
+dec $guarded_prefix<X>(nat, X*) : typeId
+def $guarded_prefix<X>(n, X*) = temp
+  -- if temp = $fresh_typeId()
+  -- if X_head :: X_tail* = X*
+  -- if n =/= 0
+  -- if n =/= 1
+  -- if n =/= 2
+  -- if n =/= 3
+  -- if n =/= 4
+  -- if n =/= 5
+  -- if n =/= 6
+  -- if n =/= 7
+  -- if n =/= 8
+  -- if n =/= 9
+  -- if n =/= 10
+  -- if n =/= 11
+  -- if n =/= 12
+  -- if n =/= 13
+  -- if n =/= 14
+  -- if n =/= 15
+def $guarded_prefix<X>(n, X*) = $fresh_typeId()
+  -- otherwise
+
+dec $late_pattern<X>(X*) : typeId
+def $late_pattern<X>(X*) = $fresh_typeId()
+  -- if false
+  -- if X_head :: X_tail* = X*
+def $late_pattern<X>(X*) = $fresh_typeId()
+  -- otherwise

@@ -1,0 +1,8 @@
+prefix_success=FRESH__0
+prefix_failure=FRESH__1
+pattern_failure=FRESH__1
+late_pattern=FRESH__0
+det_prefix_success=FRESH__0
+det_prefix_failure=FRESH__1
+det_pattern_failure=FRESH__1
+det_late_pattern=FRESH__0
