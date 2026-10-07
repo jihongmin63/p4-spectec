@@ -1,0 +1,2 @@
+syntax typeId = text
+syntax p4programIR = typeId

@@ -1,0 +1,4 @@
+syntax value = VALUE text
+syntax output = OUTPUT value
+syntax expected = EXPECTED output
+syntax p4programIR = expected

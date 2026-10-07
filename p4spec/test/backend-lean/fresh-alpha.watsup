@@ -1,0 +1,17 @@
+syntax typeId = text
+syntax box<T> = BOX T
+syntax freshAlphaIds = (typeId, typeId, typeId)
+syntax freshAlphaNode
+syntax freshAlphaBranch
+syntax freshAlphaBranches = freshAlphaBranch*
+syntax freshAlphaNode =
+  | LEAF typeId nat bool int
+  | MANY freshAlphaBranches
+  | MAYBE freshAlphaBranch?
+  | PAIRED (freshAlphaBranch, freshAlphaBranch)
+  | BOXED box<freshAlphaBranch>
+syntax freshAlphaBranch = BRANCH freshAlphaNode
+syntax freshAlphaRecord = { IDS freshAlphaIds, TREE freshAlphaNode, LITERAL text }
+syntax p4programIR = RESULT freshAlphaRecord
+
+syntax unreachableAlpha = UNUSED text

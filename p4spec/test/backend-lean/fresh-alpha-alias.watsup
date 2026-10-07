@@ -1,0 +1,3 @@
+syntax alphaBox<T> = BOX T
+syntax alphaBoxAlias<T> = alphaBox<T>
+syntax p4programIR = alphaBoxAlias<alphaBoxAlias<text>>

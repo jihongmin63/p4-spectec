@@ -1,0 +1,3 @@
+extern syntax json
+syntax alphaExternBox<T> = BOX T
+syntax p4programIR = EXTERNAL json text | WRAPPED alphaExternBox<json>
