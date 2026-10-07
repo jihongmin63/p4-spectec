@@ -143,12 +143,23 @@ dune exec p4spec/lib/lean-skeleton/main.exe -- \
 The full output is about 390 MB. For proof work, `--case-range START COUNT`
 generates a smaller piece while retaining each case's global `case_N` index.
 For example, `--case-range 0 50` generates the first 50 propositions.
+The input and answer terms for 1,908 of these targets type-check against the
+translated P4 syntax with an opaque `Program_ok` declaration. The remaining
+`switch_p4_16.p4` oracle expands to about 114 MB of Lean source and did not
+finish Lean elaboration within the available validation time. It is still
+captured, verified against the interpreter, and emitted as a proposition.
 
-To refresh the answers after an intentional SpecTec change, create a path
-list with `discover_typecheck.py --paths`, run the executable with
-`--batch-cases PATHS -I p4c/p4include spec` to capture a TSV scan, then run
-`capture_typecheck.py --scan SCAN`. This overwrites the answer files, audit,
-and manifest; review the changed outcomes before accepting them.
+To refresh the answers after an intentional SpecTec change:
+
+```sh
+python3 p4spec/test/backend-lean/discover_typecheck.py --paths > /tmp/typecheck.paths
+dune exec p4spec/lib/lean-skeleton/main.exe -- \
+  --batch-cases /tmp/typecheck.paths -I p4c/p4include spec > /tmp/typecheck.scan.tsv
+python3 p4spec/test/backend-lean/capture_typecheck.py --scan /tmp/typecheck.scan.tsv
+```
+
+This overwrites the answer files, audit, and manifest; review the changed
+outcomes before accepting them.
 
 Use `--case FILE EXPECTED` and `--reject-case FILE` for individual inputs.
 `--dump-output FILE` prints the deterministic SL interpreter's `Program_ok`
