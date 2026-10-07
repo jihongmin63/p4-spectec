@@ -101,6 +101,10 @@ module Lean = struct
     conclusion : application;
   }
 
+  type selection_policy =
+    | Nondeterministic
+    | Ordered
+
   type constructor = {
     name : string;
     arguments : type_ref list;
@@ -154,6 +158,9 @@ module Lean = struct
         argument_types : type_ref list;
         (* Source hint(input ...) positions, used by stateful failure rules. *)
         input_positions : int list option;
+        (* Declarative relations retain every successful rule.  Function and
+           otherwise clauses use source-order selection. *)
+        selection_policy : selection_policy;
         rules : rule list;
         notation : notation_part list option;
       }

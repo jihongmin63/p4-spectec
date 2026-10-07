@@ -1,0 +1,21 @@
+var n : nat
+var candidate : nat
+
+relation Candidate:
+  nat |- nat
+  hint(input %0)
+
+rule Candidate/zero:
+  n |- 0
+
+rule Candidate/one:
+  n |- 1
+
+relation Search:
+  nat |- nat
+  hint(input %0)
+
+rule Search/found:
+  n |- candidate
+  -- Candidate: n |- candidate
+  -- if candidate = 1

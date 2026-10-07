@@ -741,6 +741,7 @@ let translate_iteration (env : env) (type_parameters : string list)
       print_parameters = [];
       argument_types = List.map snd context @ List.map (fun (_, _, typ) -> collection_type typ) vectors;
       input_positions = Some (List.init (List.length context + List.length inputs) Fun.id);
+      selection_policy = L.Nondeterministic;
       rules; notation = None }
   in
   { terms = []; premises = [ L.Holds (application (List.map (fun (_, collection, _) -> collection) vectors)) ];
@@ -1637,7 +1638,9 @@ let rename_type_parameters (env : env) (type_parameters : string list)
           })
         rules )
 
-let translate_relation_unrenamed ?input_positions (env : env) (name : string) (type_parameters : string list)
+let translate_relation_unrenamed ?input_positions
+    ?(selection_policy = L.Nondeterministic) (env : env) (name : string)
+    (type_parameters : string list)
     (argument_types : L.type_ref list) (branches : branch list)
     (notation : L.notation_part list option) : L.declaration list =
   let arity : int = List.length argument_types in
@@ -1664,7 +1667,8 @@ let translate_relation_unrenamed ?input_positions (env : env) (name : string) (t
   let rules : L.rule list = List.rev rules in
   L.Relation
     { name; type_parameters; equality_parameters = []; print_parameters = [];
-      argument_types; input_positions = Some input_positions; rules; notation }
+      argument_types; input_positions = Some input_positions; selection_policy;
+      rules; notation }
   :: helpers
 
 let rename_relation_declarations (env : env) (type_parameters : string list)
@@ -1693,11 +1697,13 @@ let rename_relation_declarations (env : env) (type_parameters : string list)
       | declaration -> declaration)
     declarations
 
-let translate_relation ?input_positions (env : env) (name : string) (type_parameters : string list)
+let translate_relation ?input_positions ?selection_policy (env : env) (name : string)
+    (type_parameters : string list)
     (argument_types : L.type_ref list) (branches : branch list)
     (notation : L.notation_part list option) : L.declaration list =
   rename_relation_declarations env type_parameters
-    (translate_relation_unrenamed ?input_positions env name type_parameters argument_types branches notation)
+    (translate_relation_unrenamed ?input_positions ?selection_policy env name
+       type_parameters argument_types branches notation)
 
 type table_parameter = {
   lean_type : L.type_ref;
@@ -1981,13 +1987,16 @@ let translate_table (env : env) (id : S.id) (params : S.param list)
   in
   L.Selector selector :: relation
 
-let translate_otherwise_relation (env : env) (name : string)
+let translate_otherwise_relation ?(regular_policy = L.Nondeterministic)
+    (env : env) (name : string)
     (type_parameters : string list) (argument_types : L.type_ref list)
     (branches : branch list) (otherwise : branch) (inputs : Lang.Hints.Input.t)
     (notation : L.notation_part list option) : L.declaration list =
   let regular_name : string = name ^ ":regular" in
   let regular : L.declaration list =
-    translate_relation_unrenamed ~input_positions:inputs env regular_name type_parameters argument_types branches None
+    translate_relation_unrenamed ~input_positions:inputs
+      ~selection_policy:regular_policy env regular_name type_parameters
+      argument_types branches None
   in
   let enabled_name : string = name ^ ":enabled" in
   let (input_types, _) : L.type_ref list * L.type_ref list =
@@ -2015,10 +2024,12 @@ let translate_otherwise_relation (env : env) (name : string)
       { name = enabled_name; type_parameters; equality_parameters;
         print_parameters; argument_types = input_types;
         input_positions = Some (List.init (List.length input_types) Fun.id);
+        selection_policy = L.Nondeterministic;
         rules = enabled_rules; notation = None }
   in
   let public : L.declaration list =
-    translate_relation_unrenamed ~input_positions:inputs env name type_parameters argument_types [ otherwise ] notation
+    translate_relation_unrenamed ~input_positions:inputs ~selection_policy:L.Ordered
+      env name type_parameters argument_types [ otherwise ] notation
   in
   let binders : (string * L.type_ref) list =
     List.mapi (fun index typ -> "arg:" ^ string_of_int index, typ) argument_types
@@ -2246,12 +2257,14 @@ let translate_declaration (env : env) (decl : S.def) : L.declaration list =
             clauses
         in
         (match elseclause with
-        | None -> translate_relation env ("$" ^ id.it) type_parameters argument_types branches None
+        | None -> translate_relation ~selection_policy:L.Ordered env ("$" ^ id.it)
+            type_parameters argument_types branches None
         | Some clause ->
             let otherwise : branch =
               branch_of_clause type_parameters params (List.length clauses + 1) clause
             in
-            translate_otherwise_relation env ("$" ^ id.it) type_parameters argument_types
+            translate_otherwise_relation ~regular_policy:L.Ordered env ("$" ^ id.it)
+              type_parameters argument_types
               branches otherwise (List.init (List.length params) Fun.id) None)
   in
   List.iter

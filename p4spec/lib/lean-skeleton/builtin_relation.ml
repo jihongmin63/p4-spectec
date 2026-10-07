@@ -101,6 +101,7 @@ let relation ?(print_parameters = []) (name : string)
     { name = "$" ^ name; type_parameters; equality_parameters = [];
       print_parameters; argument_types;
       input_positions = Some (List.init (max 0 (List.length argument_types - 1)) Fun.id);
+      selection_policy = L.Nondeterministic;
       rules; notation = None }
 
 let builtin (name : string) (parameters : L.type_ref list)

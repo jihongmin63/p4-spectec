@@ -1,0 +1,34 @@
+syntax value = ZERO | ONE | WRAP value
+
+var v : value
+
+relation Gate:
+  |- value
+  hint(input %0)
+
+rule Gate/zero:
+  |- ZERO
+
+dec $ordered(value) : value
+def $ordered(ZERO) = ZERO
+def $ordered(WRAP v) = ZERO
+  -- Gate: |- ONE
+def $ordered(WRAP v) = ONE
+def $ordered(v) = v
+  -- otherwise
+
+relation PositiveLoop:
+  |- value
+  hint(input %0)
+
+rule PositiveLoop/wrap:
+  |- WRAP v
+  -- PositiveLoop: |- v
+
+relation NegativeLoop:
+  |- value
+  hint(input %0)
+
+rule NegativeLoop/not_self:
+  |- ZERO
+  -- NegativeLoop:/ |- ZERO

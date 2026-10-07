@@ -121,6 +121,7 @@ let share (declaration : L.declaration) : L.declaration list =
               arguments = List.map (fun (name, typ) -> L.Variable (name, typ)) parameters } in
             let helper = L.Relation { relation with name;
               argument_types = List.map snd parameters; input_positions = None; notation = None;
+              selection_policy = L.Nondeterministic;
               rules = [ { L.name = "intro"; binders; premises = candidate.prefix;
                           catchable = []; conclusion = call } ] } in
             let rules = List.mapi (fun index (rule : L.rule) ->

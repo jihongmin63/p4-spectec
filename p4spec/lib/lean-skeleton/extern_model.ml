@@ -112,6 +112,7 @@ let relation (name : string) (argument_types : L.type_ref list)
   L.Relation
     { name; type_parameters = []; equality_parameters = [];
       print_parameters = []; argument_types; input_positions = None;
+      selection_policy = L.Nondeterministic;
       rules = [rule]; notation }
 
 let relation_predicate (name : string) : string option =

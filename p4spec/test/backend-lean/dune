@@ -50,6 +50,23 @@
  (deps (alias relation-local-test)))
 
 (rule
+ (alias ordered-eval-test)
+ (deps check_ordered_eval.py
+  ordered-eval.watsup ordered-eval-proof.lean
+  output-search.watsup output-search-proof.lean)
+ (action
+  (run python3 %{dep:check_ordered_eval.py}
+   --exe %{exe:../../lib/lean-skeleton/main.exe}
+   --ordered %{dep:ordered-eval.watsup}
+   --ordered-proof %{dep:ordered-eval-proof.lean}
+   --search %{dep:output-search.watsup}
+   --search-proof %{dep:output-search-proof.lean})))
+
+(alias
+ (name backend-lean)
+ (deps (alias ordered-eval-test)))
+
+(rule
  (alias backend-lean)
  (deps check_fresh_case.py fresh-case.watsup fresh-case-proof.lean case-empty.p4)
  (action
