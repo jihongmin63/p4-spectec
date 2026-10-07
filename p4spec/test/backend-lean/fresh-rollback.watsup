@@ -1,0 +1,112 @@
+syntax typeId = text
+builtin dec $fresh_typeId() : typeId
+
+var n : nat
+var temp : typeId
+var output : typeId
+
+dec $tagged_fresh(nat) : typeId
+def $tagged_fresh(n) = $fresh_typeId()
+
+dec $after_three() : typeId
+def $after_three() = "unreachable"
+  -- if $tagged_fresh(0) = "never0"
+def $after_three() = "unreachable"
+  -- if $tagged_fresh(1) = "never1"
+def $after_three() = "unreachable"
+  -- if $tagged_fresh(2) = "never2"
+def $after_three() = $fresh_typeId()
+
+relation RejectFresh: |- nat
+  hint(input %0)
+rule RejectFresh/first:
+  |- n
+  -- if $tagged_fresh(0) = "never0"
+rule RejectFresh/second:
+  |- n
+  -- if $tagged_fresh(1) = "never1"
+
+dec $after_all_failed() : typeId
+def $after_all_failed() = "unreachable"
+  -- RejectFresh: |- 0
+def $after_all_failed() = $fresh_typeId()
+
+dec $nested_twice() : (typeId, typeId)
+def $nested_twice() = ($after_three(), $after_all_failed())
+
+dec $failed_prefix() : typeId
+def $failed_prefix() = "unreachable"
+  -- if temp = $fresh_typeId()
+  -- RejectFresh: |- 0
+def $failed_prefix() = $fresh_typeId()
+
+dec $otherwise_effectful() : typeId
+def $otherwise_effectful() = "unreachable"
+  -- if $tagged_fresh(0) = "never0"
+def $otherwise_effectful() = $fresh_typeId()
+  -- otherwise
+
+dec $pattern_after_fresh() : typeId
+def $pattern_after_fresh() = "unreachable"
+  -- if temp = $fresh_typeId()
+  -- if temp_head :: temp_tail* = eps
+def $pattern_after_fresh() = $fresh_typeId()
+
+dec $generic_pattern<X>(X*) : typeId
+def $generic_pattern<X>(X*) = $fresh_typeId()
+  -- if X_head :: X_tail* = X*
+def $generic_pattern<X>(X*) = "empty"
+  -- if X* = eps
+
+dec $diagonal(nat, nat) : typeId
+def $diagonal(n, n) = "same"
+def $diagonal(n, n') = $fresh_typeId()
+  -- if n =/= n'
+
+dec $fresh_typeIds(nat) : typeId*
+def $fresh_typeIds(0) = eps
+def $fresh_typeIds(n) = $fresh_typeId() :: $fresh_typeIds(n')
+  -- if n =/= 0
+  -- if n' = $(n - 1)
+
+relation AcceptFresh: |- nat
+  hint(input %0)
+rule AcceptFresh/accept:
+  |- n
+  -- if temp = $fresh_typeId()
+
+dec $negative_success() : typeId
+def $negative_success() = $fresh_typeId()
+  -- RejectFresh:/ |- 0
+
+dec $negative_failure() : typeId
+def $negative_failure() = "unreachable"
+  -- if temp = $fresh_typeId()
+  -- AcceptFresh:/ |- 0
+def $negative_failure() = $fresh_typeId()
+
+dec $priority() : typeId
+def $priority() = "chosen"
+def $priority() = $fresh_typeId()
+
+relation OnlyZero: |- nat
+  hint(input %0)
+rule OnlyZero/zero:
+  |- 0
+
+relation OnlyZeroOutput: |- nat : typeId
+  hint(input %0)
+rule OnlyZeroOutput/zero:
+  |- 0 : "zero"
+
+dec $pure_failure() : typeId
+def $pure_failure() = "unreachable"
+  -- if temp = $fresh_typeId()
+  -- OnlyZero: |- 1
+def $pure_failure() = $fresh_typeId()
+
+dec $pure_output_failure() : typeId
+def $pure_output_failure() = "unreachable"
+  -- if temp = $fresh_typeId()
+  -- OnlyZeroOutput: |- 1 : output
+def $pure_output_failure() = $fresh_typeId()
