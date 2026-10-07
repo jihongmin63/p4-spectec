@@ -84,7 +84,6 @@ type function_kind = RelationFunction | BuiltinFunction of string list
 
 type env = {
   iteration_prefix : string;
-  recursive_otherwise : string list;
   functions : function_kind StringMap.t;
   constructors : variant StringMap.t;
   aliases : alias StringMap.t;
@@ -196,7 +195,6 @@ let build_env (program : S.spec) : env =
       | _ -> env)
     {
       iteration_prefix = "";
-      recursive_otherwise = Source_dependencies.recursive_otherwise program;
       functions = StringMap.empty;
       constructors = StringMap.empty;
       aliases = StringMap.empty;
@@ -1943,6 +1941,32 @@ let translate_otherwise_relation (env : env) (name : string)
   let regular : L.declaration list =
     translate_relation_unrenamed env regular_name type_parameters argument_types branches None
   in
+  let enabled_name : string = name ^ ":enabled" in
+  let (input_types, _) : L.type_ref list * L.type_ref list =
+    Lang.Hints.Input.split inputs argument_types
+  in
+  let enabled_rules, equality_parameters, print_parameters =
+    match regular with
+    | L.Relation relation :: _ ->
+        (List.map
+          (fun (rule : L.rule) : L.rule ->
+            let (arguments, _) =
+              Lang.Hints.Input.split inputs rule.conclusion.arguments
+            in
+            { name = "from_" ^ rule.name; binders = rule.binders;
+              premises = [ L.Holds rule.conclusion ];
+              conclusion = { rule.conclusion with
+                target = L.Global enabled_name; arguments } })
+          relation.rules,
+         relation.equality_parameters, relation.print_parameters)
+    | _ -> unsupported otherwise.at ("missing regular relation " ^ name)
+  in
+  let enabled : L.declaration =
+    L.Relation
+      { name = enabled_name; type_parameters; equality_parameters;
+        print_parameters; argument_types = input_types;
+        rules = enabled_rules; notation = None }
+  in
   let public : L.declaration list =
     translate_relation_unrenamed env name type_parameters argument_types [ otherwise ] notation
   in
@@ -1965,18 +1989,10 @@ let translate_otherwise_relation (env : env) (name : string)
     let (arguments, _) : L.term list * L.term list =
       Lang.Hints.Input.split inputs rule.conclusion.arguments
     in
-    let (_, output_types) : L.type_ref list * L.type_ref list =
-      Lang.Hints.Input.split inputs argument_types
-    in
-    let outputs : (string * L.type_ref) list =
-      List.mapi (fun index typ -> "otherwise:" ^ string_of_int index, typ) output_types
-    in
     let negative : L.application =
-      { rule.conclusion with target = L.Global regular_name;
-        arguments = Lang.Hints.Input.combine inputs arguments
-          (List.map (fun (name, typ) -> L.Variable (name, typ)) outputs) }
+      { rule.conclusion with target = L.Global enabled_name; arguments }
     in
-    { rule with premises = L.NotExists (outputs, negative, otherwise.at) :: rule.premises }
+    { rule with premises = L.NotHolds (negative, otherwise.at) :: rule.premises }
   in
   let public : L.declaration list = match public with
     | L.Relation relation :: helpers ->
@@ -1990,7 +2006,7 @@ let translate_otherwise_relation (env : env) (name : string)
         L.Relation { relation with rules = { wrapper with name = wrapper_name 0 } :: rules } :: helpers
     | _ -> unsupported otherwise.at ("missing otherwise relation " ^ name)
   in
-  rename_relation_declarations env type_parameters (regular @ public)
+  rename_relation_declarations env type_parameters (regular @ [ enabled ] @ public)
 
 let rec validate_names (at : region) (names : string list) : unit =
   match names with
@@ -2075,9 +2091,6 @@ let translate_declaration (env : env) (decl : S.def) : L.declaration list =
         []
     | ExternRelD (id, _, _, _) ->
         unsupported decl.at ("external relation declaration " ^ id.it)
-    | RelD (id, _, _, _, Some otherwise, _)
-      when List.mem id.it env.recursive_otherwise ->
-        unsupported otherwise.at ("otherwise of recursive definition " ^ id.it)
     | RelD (id, nottyp, inputs, rulegroups, elsegroup, _) ->
         let argument_types : L.type_ref list =
           List.map translate_type (Mixfix.args nottyp.it)
@@ -2151,9 +2164,6 @@ let translate_declaration (env : env) (decl : S.def) : L.declaration list =
           | Error reason -> unsupported decl.at ("builtin function " ^ reason))
     | TableDecD (id, params, result, rows, _) ->
         translate_table env id params result rows
-    | FuncDecD (id, _, _, _, _, Some otherwise, _)
-      when List.mem ("$" ^ id.it) env.recursive_otherwise ->
-        unsupported otherwise.at ("otherwise of recursive definition $" ^ id.it)
     | FuncDecD (id, tparams, params, result, clauses, elseclause, _) ->
         let type_parameters : string list =
           List.map (fun (parameter : S.tparam) -> parameter.it) tparams

@@ -5,8 +5,8 @@
   traversal
   builtin
   builtin_relation
+  wfs_backend
   identifier
-  source_dependencies
   translator
   order
   printer

@@ -368,51 +368,6 @@ let expand_print_instance_arguments (graph : graph)
   in
   { source with declaration }
 
-let validate_relation_values (names : string list)
-    (source : L.located_declaration) : unit =
-  let rec validate_term (term : L.term) : unit =
-    match term with
-    | FunctionReference (Global name) when List.mem name names ->
-        Translator.unsupported source.at
-          ("recursive relation value " ^ name ^ " in declaration "
-          ^ defined_name source.declaration
-          ^ ": current-component relations must occur as direct premise heads")
-    | _ -> List.iter validate_term (Traversal.term_children term)
-  in
-  match source.declaration with
-  | Relation { rules; _ } ->
-      List.iter
-        (fun (rule : L.rule) ->
-          List.iter validate_term
-            (rule.conclusion.arguments
-            @ List.concat_map Traversal.premise_terms rule.premises))
-        rules
-  | _ -> ()
-
-let validate_negative_premises (names : string list)
-    (source : L.located_declaration) : unit =
-  match source.declaration with
-  | Relation { rules; _ } ->
-      List.iter
-        (fun (rule : L.rule) -> List.iter
-          (function
-            | L.NotHolds ({ target = Global name; _ }, at) ->
-                if List.mem name names then
-                  Translator.unsupported at
-                    ("IfNotHoldPr of same-SCC relation " ^ name)
-            | L.NotHolds ({ target = Local name; _ }, at) ->
-                Translator.unsupported at ("IfNotHoldPr of local relation " ^ name)
-            | L.NotExists (_, { target = Global name; _ }, at) ->
-                let definition : string = defined_name source.declaration in
-                if List.mem name names then
-                  Translator.unsupported at ("otherwise of recursive definition " ^ definition)
-            | L.NotExists (_, { target = Local name; _ }, at) ->
-                Translator.unsupported at ("otherwise of local relation " ^ name)
-            | L.Holds _ | L.Prop _ -> ())
-          rule.premises)
-        rules
-  | _ -> ()
-
 type sort = Data | Proposition
 
 let data_declaration (declaration : L.declaration) : bool =
@@ -734,8 +689,6 @@ let group_program (graph : graph) (print_names : StringSet.t)
   let sources : L.located_declaration list =
     List.map (fun name -> (StringMap.find name graph).source) names
   in
-  List.iter (validate_negative_premises names) sources;
-  List.iter (validate_relation_values names) sources;
   let (aliases, inductives) :
       L.located_declaration list * L.located_declaration list =
     List.partition
@@ -786,7 +739,8 @@ let group_program (graph : graph) (print_names : StringSet.t)
       | [] ->
           Translator.unsupported at ("cyclic type aliases " ^ String.concat ", " names)
       | (parameters, sort) :: rest ->
-          if List.exists (fun (other, _) -> other <> parameters) rest then
+          if sort = Data
+             && List.exists (fun (other, _) -> other <> parameters) rest then
             Translator.unsupported at
               ("mutual declarations with different type parameters: "
               ^ String.concat ", " names);
