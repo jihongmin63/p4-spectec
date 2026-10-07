@@ -1,0 +1,54 @@
+syntax color =
+  | RED
+  | BLUE
+
+syntax box<T> = BOX T
+
+syntax DecidableEq = EQ
+syntax Decidable = DEC
+syntax isTrue = TRUE
+syntax isFalse = FALSE
+
+syntax node
+syntax branch
+syntax branchList = branch*
+
+syntax node =
+  | LEAF nat
+  | MANY branch*
+  | MAYBE branch?
+  | PAIRED (branch, branch)
+  | BOXED box<branch>
+  | ALIASED branchList
+  | SHADOWS DecidableEq Decidable isTrue isFalse
+
+syntax branch = BRANCH node
+
+var c : color
+var d : color
+
+dec $eq_color(color, color) : bool
+def $eq_color(c, d) = (c = d)
+
+dec $ne_color(color, color) : bool
+def $ne_color(c, d) = (c =/= d)
+
+syntax set<K> = `{ K* `}
+
+dec $in_set<K>(K, set<K>) : bool
+def $in_set<K>(K, `{ K_e* `}) = K <- K_e*
+
+dec $in_set_via<K>(K, set<K>) : bool
+def $in_set_via<K>(K, `{ K_e* `}) = $in_set<K>(K, `{ K_e* `})
+
+dec $is_empty<K>(K*) : bool
+def $is_empty<K>(K*) = (K* = eps)
+
+dec $is_nonempty<K>(K*) : bool
+def $is_nonempty<K>(K*) = (K* =/= eps)
+
+dec $is_none<K>(K?) : bool
+def $is_none<K>(K?) = (K? = eps)
+
+dec $is_some<K>(K?) : bool
+def $is_some<K>(K?) = (K? =/= eps)

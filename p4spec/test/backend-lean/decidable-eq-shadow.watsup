@@ -1,0 +1,7 @@
+syntax shade =
+  | LIGHT
+  | DARK
+
+dec $eq_shadow<DecidableEq>(DecidableEq, DecidableEq) : bool
+def $eq_shadow<DecidableEq>(DecidableEq_a, DecidableEq_b) =
+  (DecidableEq_a = DecidableEq_b)

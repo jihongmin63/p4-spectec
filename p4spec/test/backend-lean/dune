@@ -39,3 +39,49 @@
  (alias backend-lean)
  (deps slice.lean)
  (action (run lean slice.lean)))
+
+(rule
+ (target decidable-eq.lean)
+ (deps decidable-eq.watsup decidable-eq-proof.lean)
+ (action
+  (with-stdout-to decidable-eq.lean
+   (progn
+    (run %{exe:../../lib/lean-skeleton/main.exe} %{dep:decidable-eq.watsup})
+    (cat %{dep:decidable-eq-proof.lean})))))
+
+(rule
+ (alias backend-lean)
+ (deps decidable-eq.lean)
+ (action (run lean decidable-eq.lean)))
+
+(rule
+ (target decidable-eq-shadow.lean)
+ (deps decidable-eq-shadow.watsup decidable-eq-shadow-proof.lean)
+ (action
+  (with-stdout-to decidable-eq-shadow.lean
+   (progn
+    (run %{exe:../../lib/lean-skeleton/main.exe} %{dep:decidable-eq-shadow.watsup})
+    (cat %{dep:decidable-eq-shadow-proof.lean})))))
+
+(rule
+ (alias backend-lean)
+ (deps decidable-eq-shadow.lean)
+ (action (run lean decidable-eq-shadow.lean)))
+
+(rule
+ (target decidable-eq-unsupported.actual)
+ (deps decidable-eq-unsupported.watsup)
+ (action
+  (with-stderr-to decidable-eq-unsupported.actual
+   (with-accepted-exit-codes 1
+    (run
+     %{exe:../../lib/lean-skeleton/main.exe}
+     %{dep:decidable-eq-unsupported.watsup})))))
+
+(rule
+ (alias backend-lean)
+ (deps decidable-eq-unsupported.actual)
+ (action
+  (diff
+   decidable-eq-unsupported.expected
+   decidable-eq-unsupported.actual)))
