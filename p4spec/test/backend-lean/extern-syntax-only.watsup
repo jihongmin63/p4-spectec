@@ -1,0 +1,8 @@
+extern syntax json
+syntax value = NUM nat
+
+relation Number: |- nat
+  hint(input %0)
+
+rule Number/zero:
+  |- 0

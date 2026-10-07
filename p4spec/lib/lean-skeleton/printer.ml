@@ -1,5 +1,9 @@
 module L = Ast.Lean
 
+let extern_types_active = ref false
+let atom_has_extern_types = ref false
+let model_relation_names : string list ref = ref []
+
 let print_identifier (name : string) : string = Identifier.print_identifier name
 
 let print_global_name (bound : string list) (name : string) : string =
@@ -227,10 +231,20 @@ let rec print_term (bound : string list) (term : L.term) : string =
   match term with
   | Variable (name, _) -> print_identifier name
   | Constructor (reference, arguments) ->
-      "(" ^ String.concat " "
-        (("@" ^ print_constructor_ref bound reference)
-        :: (List.map (print_type bound) reference.type_arguments
-           @ List.map print arguments)) ^ ")"
+      if !extern_types_active then
+        let result_type : L.type_ref =
+          match reference.type_arguments with
+          | [] -> L.Name reference.type_name
+          | arguments -> L.Applied (reference.type_name, arguments)
+        in
+        "((" ^ String.concat " "
+          (print_constructor_ref bound reference :: List.map print arguments)
+        ^ ") : " ^ print_type bound result_type ^ ")"
+      else
+        "(" ^ String.concat " "
+          (("@" ^ print_constructor_ref bound reference)
+          :: (List.map (print_type bound) reference.type_arguments
+             @ List.map print arguments)) ^ ")"
   | Boolean value -> string_of_bool value
   | Number (value, typ) -> "(" ^ value ^ " : " ^ print_type bound typ ^ ")"
   | Text value -> "\"" ^ escape_string value ^ "\""
@@ -294,7 +308,15 @@ and print_connective (bound : string list) (operator : string)
 and print_application (bound : string list) (application : L.application) : string =
   let name : string = print_reference bound application.target in
   let name : string =
-    match application.type_arguments with [] -> name | _ -> "@" ^ name
+    match application.type_arguments with
+    | [] -> name
+    | _ ->
+        "@" ^ name
+        ^ (match application.target with
+           | L.Global relation
+             when !atom_has_extern_types && List.mem relation !model_relation_names ->
+               " (inferInstance : _root_.SpecTecExternTypes)"
+           | _ -> "")
   in
   let arguments : string list =
     List.map (print_type bound) application.type_arguments
@@ -540,6 +562,9 @@ let print_declaration ?(derive_decidable_eq = false)
     else printed
   in
   match declaration with
+  | ExternType name ->
+      Printf.sprintf "abbrev %s : Type := _root_.SpecTecExternTypes.%s"
+        (print_identifier name) (print_identifier name)
   | Datatype { name; type_parameters; constructors } ->
       deriving
         (String.concat "\n"
@@ -1049,6 +1074,12 @@ let print_call_tuple (bound : string list) (arguments : L.term list) : string =
       in
       nest arguments
 
+let explicit_atom (name : string) : string =
+  "@Atom." ^ name
+  ^ (if !atom_has_extern_types then
+       " (inferInstance : _root_.SpecTecExternTypes)"
+     else "")
+
 let print_atom (relations : L.declaration list) (bound : string list)
     (application : L.application) : string =
   match application.target with
@@ -1056,7 +1087,7 @@ let print_atom (relations : L.declaration list) (bound : string list)
       let reversed = List.rev application.arguments in
       (match reversed with
       | result :: reversed_inputs ->
-          "(@Atom.relation_call _ _ " ^ print_identifier name ^ " "
+          "(" ^ explicit_atom "relation_call" ^ " _ _ " ^ print_identifier name ^ " "
           ^ print_call_tuple bound (List.rev reversed_inputs) ^ " "
           ^ print_term bound result ^ ")"
       | [] -> invalid_arg ("relation call has no result: " ^ name))
@@ -1113,7 +1144,12 @@ let print_atom (relations : L.declaration list) (bound : string list)
     @ class_instances
     @ List.map (print_term bound) application.arguments
   in
-  "(" ^ String.concat " " (("@" ^ name) :: arguments) ^ ")"
+  let constructor =
+    if !atom_has_extern_types then
+      "@" ^ name ^ " (inferInstance : _root_.SpecTecExternTypes)"
+    else "@" ^ name
+  in
+  "(" ^ String.concat " " (constructor :: arguments) ^ ")"
 
 let print_atom_list (relations : L.declaration list) (bound : string list)
     (applications : L.application list) : string =
@@ -1221,7 +1257,7 @@ let print_dispatch_constructor (relations : L.declaration list) (index : int)
           "  | " ^ program_rule_name index
           ^ print_wfs_parameters type_parameters equality_parameters print_parameters
           ^ binders
-          ^ " : InProgram { head := (@Atom.relation_call _ _ "
+          ^ " : InProgram { head := (" ^ explicit_atom "relation_call" ^ " _ _ "
           ^ "(_root_.SpecTecRelationRef.named \"" ^ escape_string name ^ "\") "
           ^ print_call_tuple type_parameters inputs ^ " "
           ^ print_term type_parameters result ^ "), positive := ["
@@ -1255,7 +1291,7 @@ let print_dispatch_theorem (_relations : L.declaration list) (index : int)
         |> String.concat ""
       in
       let call =
-        "(@Atom.relation_call _ _ (_root_.SpecTecRelationRef.named \""
+        "(" ^ explicit_atom "relation_call" ^ " _ _ (_root_.SpecTecRelationRef.named \""
         ^ escape_string name ^ "\") "
         ^ print_call_tuple type_parameters (List.rev reversed_inputs)
         ^ " " ^ print_term type_parameters result ^ ")"
@@ -1423,7 +1459,7 @@ let print_wfs_program (relations : L.declaration list) : string =
                 (fun (index, declaration) ->
                   print_dispatch_constructor relations index declaration)
                 dispatch
-            @ ["  | external_call {α β : Type} (f : α → β → Prop) (input : α) (output : β) : InProgram { head := (@Atom.relation_call α β (_root_.SpecTecRelationRef.external f) input output), positive := [], negative := [], side := f input output }"]) ]
+            @ ["  | external_call {α β : Type} (f : α → β → Prop) (input : α) (output : β) : InProgram { head := (" ^ explicit_atom "relation_call" ^ " α β (_root_.SpecTecRelationRef.external f) input output), positive := [], negative := [], side := f input output }"]) ]
     @ List.map (print_wfs_relation relations) relations
     @ List.concat_map
         (fun relation ->
@@ -1454,17 +1490,83 @@ let print_wfs_program (relations : L.declaration list) : string =
 
 let print (program : L.program) : string =
   let relations : L.declaration list = List.concat_map relations_in_group program in
+  let rec declarations_in_group (group : L.declaration_group) : L.declaration list =
+    match group with
+    | L.Single declaration -> [ declaration ]
+    | L.Mutual declarations -> declarations
+    | L.DerivingDecidableEq group -> declarations_in_group group
+    | L.ManualDecidableEq _ | L.ManualPrinter _ -> []
+  in
+  let all_declarations = List.concat_map declarations_in_group program in
+  let extern_types : bool =
+    List.exists (function L.ExternType _ -> true | _ -> false) all_declarations
+  in
+  let atom_needs_extern_types : bool =
+    let dependencies =
+      List.filter_map
+        (function
+          | L.Datatype _ | L.TypeAlias _ | L.Structure _ as declaration ->
+              Some (Order.defined_name declaration, Order.references declaration)
+          | _ -> None)
+        all_declarations
+    in
+    let rec close (names : Order.StringSet.t) : Order.StringSet.t =
+      let expanded =
+        List.fold_left
+          (fun names (name, references) ->
+            if Order.StringSet.is_empty (Order.StringSet.inter names references)
+            then names
+            else Order.StringSet.add name names)
+          names dependencies
+      in
+      if Order.StringSet.equal expanded names then names else close expanded
+    in
+    let roots =
+      List.fold_left
+        (fun names -> function
+          | L.ExternType name -> Order.StringSet.add name names
+          | _ -> names)
+        Order.StringSet.empty all_declarations
+    in
+    let dependent = close roots in
+    List.exists
+      (function
+        | L.Relation { argument_types; _ } ->
+            List.exists
+              (fun typ ->
+                not (Order.StringSet.is_empty
+                  (Order.StringSet.inter dependent (Order.type_references typ))))
+              argument_types
+        | _ -> false)
+      relations
+  in
+  let p4_externs : bool =
+    List.exists
+      (function
+        | L.Relation { name = "ExternFunctionCall_eval_lctk"
+                       | "ExternFunctionCall_eval"
+                       | "ExternMethodCall_eval"; _ } -> true
+        | _ -> false)
+      relations
+  in
+  extern_types_active := extern_types;
+  atom_has_extern_types := atom_needs_extern_types;
+  model_relation_names := List.map relation_name relations;
   let other_groups : L.declaration_group list =
     List.filter (fun group -> relations_in_group group = []) program
   in
   (* A full specification has thousands of constructors in one inductive
      program, which exceeds Lean's default elaboration heartbeat limit. *)
   "set_option autoImplicit false\nset_option linter.unusedVariables false\n"
+  ^ (if extern_types then "set_option linter.unusedSectionVars false\n" else "")
   ^ (if List.length relations > 100 then "set_option maxHeartbeats 0\n" else "")
   ^ "\n"
   ^ print_prelude ^ "\n\n"
+  ^ (if extern_types then Extern_model.types_source ^ "\n\n" else "")
   ^ (if relations = [] then "" else Wfs_backend.source ^ "\n\n")
   ^ "namespace SpecTec\n\n"
+  ^ (if extern_types then "variable [SpecTecExternTypes]\n\n" else "")
   ^ String.concat "\n\n" (List.map print_group other_groups)
+  ^ (if p4_externs then "\n\n" ^ Extern_model.p4_source else "")
   ^ (if relations = [] then "" else "\n\n" ^ print_wfs_program relations)
   ^ "\n\nend SpecTec"

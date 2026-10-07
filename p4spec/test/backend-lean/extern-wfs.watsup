@@ -1,0 +1,23 @@
+extern syntax json
+syntax value = NUM nat | EXT json
+
+var v : value
+
+relation A: |- nat
+  hint(input %0)
+
+relation B: |- nat
+  hint(input %0)
+
+rule A/from_not_B:
+  |- 0
+  -- B:/ |- 0
+
+rule B/from_not_A:
+  |- 0
+  -- A:/ |- 0
+
+dec $choose(value) : value
+def $choose(NUM 0) = NUM 1
+def $choose(v) = v
+  -- otherwise

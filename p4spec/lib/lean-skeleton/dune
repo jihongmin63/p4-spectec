@@ -5,6 +5,7 @@
   traversal
   builtin
   builtin_relation
+  extern_model
   wfs_backend
   identifier
   translator

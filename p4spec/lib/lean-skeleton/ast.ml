@@ -136,6 +136,7 @@ module Lean = struct
 
   type declaration =
     | Datatype of datatype
+    | ExternType of string
     | TypeAlias of type_alias
     | Structure of { name : string; fields : (string * type_ref) list }
     | Relation of {

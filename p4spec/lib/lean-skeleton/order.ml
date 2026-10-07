@@ -4,7 +4,7 @@ module StringSet = Set.Make (String)
 
 let defined_name (declaration : L.declaration) : string =
   match declaration with
-  | Datatype { name; _ } | TypeAlias { name; _ } | Structure { name; _ }
+  | Datatype { name; _ } | ExternType name | TypeAlias { name; _ } | Structure { name; _ }
   | Relation { name; _ } | Builtin { name; _ } | Selector { name; _ }
   | Coercion { name; _ }
   | Membership { name; _ } -> name
@@ -74,6 +74,7 @@ let rule_references (rule : L.rule) : StringSet.t =
 
 let references (declaration : L.declaration) : StringSet.t =
   match declaration with
+  | ExternType _ -> StringSet.empty
   | Datatype { constructors; _ } ->
       unions
         (List.map
@@ -326,7 +327,7 @@ let expand_declaration (lookup : string -> L.type_alias option)
                     patterns,
                   row ))
               selector.arms }
-  | TypeAlias _ | Builtin _ | Coercion _ | Membership _ -> source.declaration
+  | ExternType _ | TypeAlias _ | Builtin _ | Coercion _ | Membership _ -> source.declaration
 
 let expand_print_instance_arguments (graph : graph)
     (source : L.located_declaration) : L.located_declaration =
@@ -726,6 +727,7 @@ let group_program (graph : graph) (print_names : StringSet.t)
             | Datatype { type_parameters; _ } -> type_parameters, Data
             | Structure _ -> [], Data
             | Relation { type_parameters; _ } -> type_parameters, Proposition
+            | ExternType _ -> Translator.unsupported at "mutual external type definitions"
             | Builtin _ -> Translator.unsupported at "mutual builtin definitions"
             | Selector _ ->
                 Translator.unsupported at "mutual selector definitions"

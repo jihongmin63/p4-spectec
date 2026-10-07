@@ -80,7 +80,7 @@ type alias = { type_parameters : string list; body : S.typ }
 type structure_field = { atom : S.atom; name : string; typ : S.typ }
 
 type function_kind = RelationFunction | BuiltinFunction of string list
-  | BuiltinRelation of string list | UnsupportedFunction of string
+  | BuiltinRelation of string list
 
 type env = {
   iteration_prefix : string;
@@ -189,7 +189,7 @@ let build_env (program : S.spec) : env =
               (if Builtin_relation.is_relation id.it then BuiltinRelation names
                else BuiltinFunction names) env.functions }
       | ExternDecD (id, _, _, _, _) ->
-          { env with functions = StringMap.add id.it (UnsupportedFunction "external function") env.functions }
+          { env with functions = StringMap.add id.it RelationFunction env.functions }
       | TableDecD (id, _, _, _, _) ->
           { env with functions = StringMap.add id.it RelationFunction env.functions }
       | _ -> env)
@@ -1037,7 +1037,6 @@ let rec translate_term (env : env) (type_parameters : string list)
                        ^ " because its number of type arguments is unexpected"));
                 true
             | Error reason -> unsupported exp.at ("builtin call " ^ reason))
-        | Some (UnsupportedFunction kind) -> unsupported exp.at (kind ^ " call $" ^ id.it)
         | None -> unsupported exp.at ("unknown function call $" ^ id.it)
       in
       let translate_argument (next : int) (argument : S.arg) : term_result =
@@ -2085,12 +2084,22 @@ let translate_declaration (env : env) (decl : S.def) : L.declaration list =
                    (StringMap.find id.it env.structures);
              } ]
     | ExternTypD (id, _) ->
-        unsupported decl.at ("external type declaration " ^ id.it)
+        if not (List.mem id.it [ "json"; "archState"; "objectState" ]) then
+          unsupported decl.at ("unknown external type declaration " ^ id.it);
+        [ L.ExternType id.it ]
     | VarD _ ->
         (* TODO: Translate metavariable declarations. *)
         []
-    | ExternRelD (id, _, _, _) ->
-        unsupported decl.at ("external relation declaration " ^ id.it)
+    | ExternRelD (id, nottyp, _, _) ->
+        if not (List.mem id.it
+          [ "Call_extern_func"; "Call_builtin_func"; "Call_extern_rel";
+            "ExternFunctionCall_eval_lctk"; "ExternFunctionCall_eval";
+            "ExternMethodCall_eval" ]) then
+          unsupported decl.at ("unknown external relation declaration " ^ id.it);
+        let argument_types = List.map translate_type (Mixfix.args nottyp.it) in
+        [ Extern_model.relation id.it argument_types
+            (Extern_model.relation_predicate id.it)
+            (Some (translate_notation nottyp.it)) ]
     | RelD (id, nottyp, inputs, rulegroups, elsegroup, _) ->
         let argument_types : L.type_ref list =
           List.map translate_type (Mixfix.args nottyp.it)
@@ -2114,8 +2123,13 @@ let translate_declaration (env : env) (decl : S.def) : L.declaration list =
             let otherwise : branch = branch_of_rule (snd group.it) in
             translate_otherwise_relation env id.it [] argument_types branches otherwise inputs
               (Some notation))
-    | ExternDecD (id, _, _, _, _) ->
-        unsupported decl.at ("external function declaration " ^ id.it)
+    | ExternDecD (id, tparams, params, result, _) ->
+        if tparams <> [] || not (List.mem id.it [ "init_archState"; "init_objectState" ])
+        then unsupported decl.at ("unknown external function declaration " ^ id.it);
+        let arguments = List.map (translate_parameter_with_parameters []) params in
+        [ Extern_model.relation ("$" ^ id.it)
+            (arguments @ [ translate_type result ])
+            (Extern_model.function_predicate id.it) None ]
     | BuiltinDecD (id, tparams, params, result, _) ->
         let type_parameters : string list =
           List.map (fun (parameter : S.tparam) -> parameter.it) tparams
@@ -2198,6 +2212,7 @@ let translate_declaration (env : env) (decl : S.def) : L.declaration list =
           validate_names decl.at
             (List.map (fun (rule : L.rule) -> rule.name) rules)
       | L.TypeAlias _ -> ()
+      | L.ExternType _ -> ()
       | L.Structure _ -> ()
       | L.Builtin _ | L.Selector _ | L.Coercion _ | L.Membership _ -> ())
     declarations;

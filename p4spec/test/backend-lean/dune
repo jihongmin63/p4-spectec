@@ -195,6 +195,75 @@
  (action (run lean relation-wfs.lean)))
 
 (rule
+ (target extern-model.lean)
+ (deps extern-model.watsup extern-model-proof.lean)
+ (action
+  (with-stdout-to extern-model.lean
+   (progn
+    (run %{exe:../../lib/lean-skeleton/main.exe} %{dep:extern-model.watsup})
+    (cat %{dep:extern-model-proof.lean})))))
+
+(rule
+ (alias backend-lean)
+ (deps extern-model.lean)
+ (action (run lean extern-model.lean)))
+
+(rule
+ (target extern-syntax-only.lean)
+ (deps extern-syntax-only.watsup)
+ (action
+  (with-stdout-to extern-syntax-only.lean
+   (run %{exe:../../lib/lean-skeleton/main.exe}
+    %{dep:extern-syntax-only.watsup}))))
+
+(rule
+ (alias backend-lean)
+ (deps extern-syntax-only.lean)
+ (action (run lean extern-syntax-only.lean)))
+
+(rule
+ (target extern-wfs.lean)
+ (deps extern-wfs.watsup)
+ (action
+  (with-stdout-to extern-wfs.lean
+   (run %{exe:../../lib/lean-skeleton/main.exe}
+    %{dep:extern-wfs.watsup}))))
+
+(rule
+ (alias backend-lean)
+ (deps extern-wfs.lean)
+ (action (run lean extern-wfs.lean)))
+
+(rule
+ (target actual-extern-slice.lean)
+ (deps
+  actual_extern_slice.py actual-extern-proof.lean
+  (source_tree ../../../spec))
+ (action
+  (with-stdout-to actual-extern-slice.lean
+   (progn
+    (run python3 %{dep:actual_extern_slice.py}
+     --exe %{exe:../../lib/lean-skeleton/main.exe}
+     --spec ../../../spec)
+    (cat %{dep:actual-extern-proof.lean})))))
+
+(rule
+ (alias backend-lean)
+ (deps actual-extern-slice.lean)
+ (action (run lean actual-extern-slice.lean)))
+
+(rule
+ (alias backend-lean)
+ (deps
+  extern_inventory.py
+  (source_tree ../../../spec)
+  (source_tree ../../../spec-meta/common))
+ (action
+  (run python3 %{dep:extern_inventory.py}
+   --exe %{exe:../../lib/lean-skeleton/main.exe}
+   --spec ../../../spec --meta ../../../spec-meta/common)))
+
+(rule
  (target case-obligations.actual)
  (deps case-obligation.watsup case-empty.p4 case-semicolon.p4 case-oracle.lean)
  (action

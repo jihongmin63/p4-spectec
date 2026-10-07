@@ -1,0 +1,47 @@
+extern syntax json
+extern syntax archState
+extern syntax objectState
+
+syntax val = BOOL bool | EXT json
+syntax typ = NAT
+syntax id = ID text
+syntax res<X> = OK X | FAIL
+
+syntax nameIR = NAME text
+syntax objectId = OBJECT text
+syntax typeIR = VOID | NAT
+syntax value = NUM nat
+syntax errorValue = ERROR
+syntax typingContext = TC
+syntax evalContext = EC
+syntax arch = { STATE archState }
+syntax callResult = RETURN value? | EXIT | REJECT errorValue
+
+extern dec $init_archState : archState
+extern dec $init_objectState(nameIR, typeIR*, id*, value*) : objectState
+
+extern relation Call_extern_func:
+  |- id `< typ* `> `( val* `) : res<val>
+  hint(input %0 %1 %2)
+
+extern relation Call_builtin_func:
+  |- id '@' `< typ* `> `( val* `) : res<val>
+  hint(input %0 %1 %2)
+
+extern relation Call_extern_rel:
+  |- id val* : res<val*>
+  hint(input %0 %1)
+
+extern relation ExternFunctionCall_eval_lctk:
+  typingContext |- nameIR `( nameIR* `) ~> value
+  hint(input %0 %1 %2)
+
+extern relation ExternFunctionCall_eval:
+  evalContext arch |- nameIR `( nameIR* `)
+                    : evalContext arch callResult
+  hint(input %0 %1 %2 %3)
+
+extern relation ExternMethodCall_eval:
+  evalContext arch |- objectId '.' nameIR `( nameIR* `)
+                    : evalContext arch callResult
+  hint(input %0 %1 %2 %3 %4)
