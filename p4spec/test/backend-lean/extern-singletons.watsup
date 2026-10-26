@@ -1,0 +1,10 @@
+extern syntax json
+extern syntax archState
+extern syntax objectState
+extern syntax packetState
+extern dec $init_archState : archState
+syntax payload = { JSON json, ARCH archState, OBJECT objectState, PACKET packetState }
+var p : payload
+relation Copy : payload ~> payload
+  hint(input %0)
+rule Copy/value : p ~> p

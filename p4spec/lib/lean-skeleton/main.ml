@@ -2,9 +2,12 @@ let ( let* ) = Result.bind
 
 let () =
   let arguments : string list = Array.to_list Sys.argv |> List.tl in
-  let arguments = match arguments with
-    | "--relation-semantics" :: "declarative" :: rest -> rest
-    | args -> args in
+  let rec semantics ordered = function
+    | "--relation-semantics" :: "ordered" :: rest -> semantics true rest
+    | "--relation-semantics" :: "declarative" :: rest -> semantics false rest
+    | arg :: rest -> let ordered, args = semantics ordered rest in ordered, arg :: args
+    | [] -> ordered, [] in
+  let ordered, arguments = semantics true arguments in
   let keep_going : bool = List.mem "--keep-going" arguments in
   (match List.find_opt
       (fun argument ->
@@ -25,11 +28,11 @@ let () =
         let* spec_il = Pass.elab paths_spec in
         if keep_going then
           let (lean_code, diagnostics) : string * Diagnostic.t list =
-            Pipeline.transpile_all spec_il
+            Pipeline.transpile_all ~ordered spec_il
           in
           Ok (lean_code, diagnostics)
         else
-          let* lean_code = Pipeline.transpile spec_il in
+          let* lean_code = Pipeline.transpile ~ordered spec_il in
           Ok (lean_code, []))
   in
   let report : Diagnostic.Report.t =

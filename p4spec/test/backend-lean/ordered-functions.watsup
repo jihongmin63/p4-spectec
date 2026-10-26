@@ -1,0 +1,100 @@
+var n : nat
+var m : nat
+var b : bool
+var a : nat
+var z : nat
+syntax result = FAIL | OK
+relation FailureValue: nat ~> result
+  hint(input %0)
+rule FailureValue/data: n ~> FAIL
+rule FailureValue/default: n ~> OK
+  -- otherwise
+relation Multi: nat ~> nat ':' nat ~> nat
+  hint(input %0 %2)
+rule Multi/add: n ~> $(n + m) ':' m ~> $(n * m)
+relation EqualPair: nat ':' nat ~> bool
+  hint(input %0 %1)
+rule EqualPair/same: n ':' n ~> true
+rule EqualPair/default: n ':' m ~> false
+  -- otherwise
+relation Zero: |- nat
+  hint(input %0)
+rule Zero/zero: |- 0
+relation Nonzero: nat ~> bool
+  hint(input %0)
+rule Nonzero/test: n ~> true
+  -- Zero:/ |- n
+rule Nonzero/default: n ~> false
+  -- otherwise
+relation Count: nat ~> nat
+  hint(input %0)
+rule Count/zero: 0 ~> 0
+rule Count/step: n ~> $(m + 1)
+  -- if $(n > 0)
+  -- if a = $(n - 1)
+  -- Count: a ~> m
+
+dec $choose(nat) : nat
+def $choose(n) = 1
+def $choose(n) = 2
+def $choose(n) = 9 -- otherwise
+
+dec $before_output(nat) : nat
+def $before_output(n) = $choose(m)
+  -- if m = n
+
+dec $left(nat) : nat
+dec $right(nat) : nat
+def $left(0) = 0
+def $left(n) = $right(a)
+  -- if $(n > 0)
+  -- if a = $(n - 1)
+def $right(n) = $left(n)
+
+builtin dec $max_nat(nat*) : nat
+builtin dec $text_to_int(text) : int
+var t : text
+var i : int
+dec $max_or_default(nat*) : nat
+var ns : nat*
+def $max_or_default(ns) = $max_nat(ns)
+def $max_or_default(ns) = 99 -- otherwise
+
+dec $parse_or_default(text) : int
+def $parse_or_default(t) = $text_to_int(t)
+def $parse_or_default(t) = -1 -- otherwise
+
+syntax pair<K, V> = K ':' V
+syntax set<X> = `{ X* `}
+syntax map<K, V> = set<pair<K, V>>
+dec $dom_map<K, V>(map<K, V>) : set<K>
+def $dom_map<K, V>(`{ (K ':' V)* `}) = `{ K* `}
+
+builtin dec $strip_prefix(text, text) : text
+dec $strip_or_default(text, text) : text
+var prefix : text
+def $strip_or_default(t, prefix) = $strip_prefix(t, prefix)
+def $strip_or_default(t, prefix) = "missing" -- otherwise
+
+dec $identity(nat) : nat
+def $identity(n) = n
+dec $apply(def $f(nat) : nat, nat) : nat
+def $apply(def $f, n) = $f(n)
+dec $via_apply(nat) : nat
+def $via_apply(n) = $apply(def $identity, n)
+
+builtin dec $partition_<X>(X*, nat) : (X*, X*)
+var aa : nat
+var bb : nat
+dec $partition_result(nat*, nat) : nat
+def $partition_result(ns, n) = 1
+  -- if (aa*, bb*) = $partition_<nat>(ns, n)
+def $partition_result(ns, n) = 99 -- otherwise
+
+syntax color = RED | BLUE
+dec $max_bool(nat*) : bool
+def $max_bool(ns) = true -- if n = $max_nat(ns)
+tbl dec $table_fallback(color) : bool
+tbl def $table_fallback =
+  | RED => $max_bool(eps)
+  | _ => false

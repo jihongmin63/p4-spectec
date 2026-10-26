@@ -1,0 +1,109 @@
+;; Structural downcasts: patterns of a subtype inside tuples, lists and options.
+
+var n : nat
+var m : nat
+var i : nat
+var j : nat
+var k : nat
+var z : int
+
+syntax animal = DOG nat | CAT nat
+syntax dog = DOG nat
+syntax owner = OWNER nat animal?
+
+;; Tuple, as in Callee_eval
+dec $find(nat) : (nat, animal)
+def $find(0) = (1, DOG 5)
+def $find(n) = (2, CAT 6)
+  -- otherwise
+
+relation TupleDog: nat ~> nat
+  hint(input %0)
+rule TupleDog/dog: n ~> k
+  -- if (m, dog) = $find(n)
+  -- if DOG k = dog
+rule TupleDog/other: n ~> 0
+  -- otherwise
+
+;; Three components with an unchanged one in the middle
+dec $triple(nat) : (animal, nat, animal)
+def $triple(0) = (DOG 1, 2, DOG 3)
+def $triple(n) = (DOG 1, 2, CAT 3)
+  -- otherwise
+
+relation TripleDogs: nat ~> nat
+  hint(input %0)
+rule TripleDogs/dogs: n ~> $(i + m + j)
+  -- if (dog_1, m, dog_2) = $triple(n)
+  -- if DOG i = dog_1
+  -- if DOG j = dog_2
+rule TripleDogs/other: n ~> 0
+  -- otherwise
+
+;; List, as in $split_externConstructorOrMethodPrototypeList
+dec $animals(nat) : animal*
+def $animals(0) = [DOG 1, DOG 2]
+def $animals(n) = [DOG 1, CAT 2]
+  -- otherwise
+
+relation ListDogs: nat ~> nat
+  hint(input %0)
+rule ListDogs/dogs: n ~> |dog*|
+  -- if dog* = $animals(n)
+rule ListDogs/other: n ~> 0
+  -- otherwise
+
+;; Singleton list, as in $init_tableKeys
+dec $one(nat) : animal*
+def $one(0) = [DOG 7]
+def $one(1) = [DOG 1, DOG 2]
+def $one(n) = [CAT 7]
+  -- otherwise
+
+relation SingleDog: nat ~> nat
+  hint(input %0)
+rule SingleDog/dog: n ~> k
+  -- if [ dog ] = $one(n)
+  -- if DOG k = dog
+rule SingleDog/other: n ~> 0
+  -- otherwise
+
+;; Option inside a constructor parameter, as in $lift_parameterIR
+dec $owner(nat) : owner
+def $owner(0) = OWNER 3 (DOG 1)
+def $owner(1) = OWNER 4 eps
+def $owner(n) = OWNER 5 (CAT 1)
+  -- otherwise
+
+dec $petNumber(owner) : nat
+def $petNumber(OWNER n dog?) = n
+def $petNumber(OWNER n animal?) = 0
+  -- otherwise
+
+relation OptionDog: nat ~> nat
+  hint(input %0)
+rule OptionDog/pet: n ~> $petNumber($owner(n))
+
+;; Integers inside a tuple
+dec $pairOf(int) : (int, int)
+def $pairOf(z) = (+1, z)
+
+relation NatPair: int ~> nat
+  hint(input %0)
+rule NatPair/both: z ~> $(i + j)
+  -- if (i, j) = $pairOf(z)
+rule NatPair/other: z ~> 0
+  -- otherwise
+
+;; Tuples inside a list
+dec $pairs(nat) : (nat, animal)*
+def $pairs(0) = [(1, DOG 2), (3, DOG 4)]
+def $pairs(n) = [(1, DOG 2), (3, CAT 4)]
+  -- otherwise
+
+relation PairDogs: nat ~> nat
+  hint(input %0)
+rule PairDogs/dogs: n ~> |dog*|
+  -- if (m, dog)* = $pairs(n)
+rule PairDogs/other: n ~> 0
+  -- otherwise

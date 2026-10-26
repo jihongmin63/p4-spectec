@@ -59,3 +59,5 @@ let structure ~(final : bool) paths_spec =
 let annotate paths_spec =
   let* spec_sl = structure ~final:false paths_spec in
   annotate_spec spec_sl
+
+let algo_defs = Algo.algo_defs

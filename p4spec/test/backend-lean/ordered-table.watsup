@@ -1,0 +1,23 @@
+syntax color = RED | GREEN | BLUE
+
+var c : color
+
+;; partial table: GREEN and BLUE have no applicable row
+tbl dec $is_red(color) : bool
+tbl def $is_red =
+  | RED => true
+
+;; catch-all row: every input has an applicable row
+tbl dec $is_warm(color) : bool
+tbl def $is_warm =
+  | RED => true
+  | _ => false
+
+;; parameterless table without rows
+tbl dec $never : bool
+
+;; a table abort must not select the caller's otherwise
+dec $guarded(color) : bool
+def $guarded(c) = $is_red(c)
+def $guarded(c) = false
+  -- otherwise

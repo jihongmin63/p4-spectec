@@ -1,0 +1,23 @@
+var t : text
+var r : text
+var n : nat
+var m : nat
+var ns : nat*
+dec $slice_text(text, nat, nat) : text
+def $slice_text(t, n, m) = t[n : m]
+def $slice_text(t, n, m) = "fallback" -- otherwise
+dec $update_text(text, nat, text) : text
+def $update_text(t, n, r) = t[ [n] = r ]
+def $update_text(t, n, r) = "fallback" -- otherwise
+dec $index_text(text, nat) : text
+def $index_text(t, n) = t[n]
+def $index_text(t, n) = "fallback" -- otherwise
+dec $slice_list(nat*, nat, nat) : nat*
+def $slice_list(ns, n, m) = ns[n : m]
+def $slice_list(ns, n, m) = eps -- otherwise
+dec $update_list(nat*, nat, nat) : nat*
+def $update_list(ns, n, m) = ns[ [n] = m ]
+def $update_list(ns, n, m) = eps -- otherwise
+dec $divide_nat(nat, nat) : nat
+def $divide_nat(n, m) = $(n / m)
+def $divide_nat(n, m) = 99 -- otherwise

@@ -229,4 +229,24 @@
  (alias backend-lean)
  (deps ordered-runtime.lean)
  (action (run lean ordered-runtime.lean)))
+(rule
+ (target ordered-choice.lean)
+ (deps ordered-choice.watsup ordered-choice-proof.lean)
+ (action (with-stdout-to %{target}
+   (progn (run %{exe:../../lib/lean-skeleton/main.exe} %{dep:ordered-choice.watsup})
+          (cat %{dep:ordered-choice-proof.lean})))))
+(rule
+ (alias backend-lean)
+ (deps ordered-choice.lean)
+ (action (run lean ordered-choice.lean)))
 
+(rule
+ (target ordered-extern.lean)
+ (deps ordered-extern.watsup ordered-extern-proof.lean)
+ (action (with-stdout-to %{target}
+   (progn (run %{exe:../../lib/lean-skeleton/main.exe} %{dep:ordered-extern.watsup})
+          (cat %{dep:ordered-extern-proof.lean})))))
+(rule
+ (alias backend-lean)
+ (deps ordered-extern.lean)
+ (action (run lean ordered-extern.lean)))

@@ -1,0 +1,23 @@
+var n : nat
+var m : nat
+relation Choose: nat ~> nat
+  hint(input %0)
+rule Choose/first: n ~> 1
+rule Choose/second: n ~> 2
+rule Choose/default: n ~> 9
+  -- otherwise
+relation Caller: nat ~> nat
+  hint(input %0)
+rule Caller/requires_second: n ~> 20
+  -- Choose: n ~> 2
+rule Caller/default: n ~> 30
+  -- otherwise
+relation Guarded: nat ~> nat
+  hint(input %0)
+rule Guarded/zero: n ~> 10
+  -- if n = 0
+rule Guarded/default: n ~> 11
+  -- otherwise
+relation Copy: nat ~> nat
+  hint(input %0)
+rule Copy/copy: n ~> n

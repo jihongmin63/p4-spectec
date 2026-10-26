@@ -15,3 +15,5 @@ val elab : string list -> (Lang.Il.spec, error) result
 val algo : string list -> (Lang.Al.spec, error) result
 val structure : final:bool -> string list -> (Lang.Sl.spec, error) result
 val annotate : string list -> (Lang.Pl.spec, error) result
+
+val algo_defs : Lang.Il.spec -> (Lang.Al.def, error) result list

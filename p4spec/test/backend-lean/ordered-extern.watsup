@@ -1,0 +1,14 @@
+extern syntax archState
+extern dec $init_archState : archState
+var state : archState
+dec $read_or_default(archState) : nat
+def $read_or_default(state) = 1
+  -- if state = $init_archState()
+def $read_or_default(state) = 9 -- otherwise
+
+extern dec $arbitrary_nat : nat
+var n : nat
+dec $read_nat_or_default(nat) : nat
+def $read_nat_or_default(n) = 1
+  -- if n = $arbitrary_nat()
+def $read_nat_or_default(n) = 9 -- otherwise
