@@ -285,6 +285,38 @@ This checks generated declarations and selected proofs, not a complete
 `Program_ok` correctness theorem. Corpus declaration checks likewise do not
 prove the exported propositions.
 
+To attempt proofs for accepted corpus cases, smallest P4 source first:
+
+```sh
+ELAN_TOOLCHAIN=leanprover/lean4:v4.34.1 python3 \
+  p4spec/test/backend-lean/prove_positive_cases.py \
+  --exe _build/default/p4spec/lib/lean-skeleton/main.exe \
+  --spec spec -I p4c/p4include --limit 10 \
+  --output p4spec/test/backend-lean/generated/positive-first10 \
+  --report p4spec/test/backend-lean/positive-first10.md
+```
+
+The runner selects `accept` entries from `typecheck-cases.tsv`, retaining their
+original IDs, and sorts by source bytes then path. `--offset 10 --limit 10`
+selects the next batch; `--limit 0` selects all remaining positives. Output and
+report paths must be new on each run. Generated Lean, command output, phase
+timings, input hashes and JSON results stay in the artifact directory; the
+separate Markdown document records the run as it progresses.
+
+Shared executable semantics are generated and compiled once per run. Each case
+uses native `runEval` to find the final supply, then proves
+`Program_ok input expected` with `runEval_sound` and kernel reduction (`rfl`).
+Only successful kernel checking and an axiom audit count as `proved`; native
+evaluation is diagnostic evidence. The target proves the exact recorded output
+is accepted, not the additional uniqueness conjunct of the corpus proposition.
+No `sorry` or native-evaluation axiom is permitted in a successful proof.
+
+Default fuel attempts are 128, 512 and 2048; only `outOfFuel` retries with more
+fuel. `--fuel`, `--timeout` (120 seconds per case phase), `--setup-timeout`
+(900 seconds per shared setup phase), and `--heartbeats` control the bounds.
+Timeouts, unsupported choices, unmatch, abort and proof errors remain explicit
+in the report. A run exits nonzero if any selected case remains unproved.
+
 ## P4 type-checking proof obligations
 
 The corpus exporter separates selection (`case_manifest.ml`), translation of

@@ -39,6 +39,13 @@
    --exe %{exe:../../lib/lean-skeleton/main.exe})))
 
 (rule
+ (alias backend-lean)
+ (deps check_positive_proofs.py prove_positive_cases.py case-obligation.watsup
+   case-empty.p4 case-semicolon.p4 case-oracle.lean)
+ (action (run python3 %{dep:check_positive_proofs.py}
+   --exe %{exe:../../lib/lean-skeleton/main.exe})))
+
+(rule
  (target extern-direct.lean)
  (deps extern-model.watsup extern-direct-proof.lean)
  (action
