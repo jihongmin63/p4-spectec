@@ -2298,8 +2298,6 @@ let translate_declaration (env : env) (decl : S.def) : L.declaration list =
         [ Extern_model.relation ~type_parameters ("$" ^ id.it)
             (arguments @ [ translate_type_with_parameters type_parameters result ])
             (if env.ordered then None else Extern_model.function_predicate id.it) None ]
-    | BuiltinDecD (id, _, _, _, _) when id.it = "fresh_typeId" ->
-        unsupported decl.at "fresh type ID allocation"
     | BuiltinDecD (id, tparams, params, result, _) ->
         let type_parameters : string list =
           List.map (fun (parameter : S.tparam) -> parameter.it) tparams

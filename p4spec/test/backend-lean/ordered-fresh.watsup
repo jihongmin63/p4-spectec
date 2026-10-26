@@ -1,0 +1,95 @@
+syntax typeId = text
+var id : typeId
+var n : nat
+var m : nat
+builtin dec $fresh_typeId() : typeId
+
+relation FreshOne: nat ~> typeId hint(input %0)
+rule FreshOne/one: n ~> id
+  -- if id = $fresh_typeId()
+
+relation FreshPair: nat ~> typeId ':' typeId hint(input %0)
+rule FreshPair/pair: n ~> id_a ':' id_b
+  -- FreshOne: n ~> id_a
+  -- FreshOne: n ~> id_b
+
+relation FreshMismatch: nat ~> typeId hint(input %0)
+rule FreshMismatch/mismatch: n ~> "unreachable"
+  -- FreshOne: n ~> "not-fresh"
+rule FreshMismatch/fallback: n ~> $fresh_typeId()
+  -- otherwise
+
+relation FreshFails: |- nat hint(input %0)
+rule FreshFails/fails: |- n
+  -- if id = $fresh_typeId()
+  -- if id = "not-fresh"
+
+relation FreshExists: |- nat hint(input %0)
+rule FreshExists/exists: |- n
+  -- if id = $fresh_typeId()
+
+relation NegatedFailure: nat ~> typeId hint(input %0)
+rule NegatedFailure/negative: n ~> $fresh_typeId()
+  -- FreshFails:/ |- n
+
+relation NegatedSuccess: nat ~> typeId hint(input %0)
+rule NegatedSuccess/negative: n ~> "unreachable"
+  -- FreshExists:/ |- n
+rule NegatedSuccess/fallback: n ~> $fresh_typeId()
+  -- otherwise
+
+relation FailedCaller: nat ~> typeId hint(input %0)
+rule FailedCaller/call: n ~> "unreachable"
+  -- FreshFails: |- n
+rule FailedCaller/fallback: n ~> $fresh_typeId()
+  -- otherwise
+
+dec $one(nat) : typeId
+def $one(n) = $fresh_typeId()
+
+dec $fresh_typeIds(nat) : typeId*
+def $fresh_typeIds(0) = eps
+def $fresh_typeIds(n) = $fresh_typeId() :: $fresh_typeIds(m)
+  -- if $(n > 0)
+  -- if m = $(n - 1)
+
+dec $many(nat*) : typeId*
+def $many(n*) = $one(n)*
+
+dec $pair() : (typeId, typeId)
+def $pair() = ($fresh_typeId(), $fresh_typeId())
+
+dec $twice(def $f() : typeId) : (typeId, typeId)
+def $twice(def $f) = ($f(), $f())
+dec $next_id() : typeId
+def $next_id() = $fresh_typeId()
+dec $callback_pair() : (typeId, typeId)
+def $callback_pair() = $twice(def $next_id)
+
+builtin dec $text_to_int(text) : int
+dec $fresh_then_abort() : int
+def $fresh_then_abort() = $text_to_int("bad")
+  -- if id = $fresh_typeId()
+def $fresh_then_abort() = -1 -- otherwise
+
+dec $debug_fresh() : typeId
+def $debug_fresh() = $fresh_typeId()
+  -- debug $fresh_typeId()
+
+dec $debug_iter(nat*) : typeId
+def $debug_iter(n*) = $fresh_typeId()
+  -- debug $one(n)*
+
+dec $debug_fail() : typeId
+def $debug_fail() = "unreachable"
+  -- if id = $fresh_typeId()
+  -- if id = "not-fresh"
+dec $debug_failure() : typeId
+def $debug_failure() = "unreachable"
+  -- debug $debug_fail()
+def $debug_failure() = $fresh_typeId() -- otherwise
+
+dec $debug_abort() : typeId
+def $debug_abort() = $fresh_typeId()
+  -- debug $fresh_then_abort()
+def $debug_abort() = "unreachable" -- otherwise

@@ -240,6 +240,16 @@
  (deps ordered-choice.lean)
  (action (run lean ordered-choice.lean)))
 
+(executable
+ (name ordered_oracle)
+ (modules ordered_oracle)
+ (libraries pass interp interface runtime diagnostic util domain lang p4spectec bignum.bigint))
+(rule
+ (alias backend-lean)
+ (deps ordered-choice.watsup ordered-functions.watsup ordered-errors.watsup
+   ordered-downcast.watsup ordered-fresh.watsup)
+ (action (run %{exe:ordered_oracle.exe} %{dep:ordered-choice.watsup} %{dep:ordered-functions.watsup})))
+
 (rule
  (target ordered-extern.lean)
  (deps ordered-extern.watsup ordered-extern-proof.lean)
