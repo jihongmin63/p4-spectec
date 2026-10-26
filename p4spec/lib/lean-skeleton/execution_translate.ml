@@ -13,6 +13,7 @@ let ident = Printer.print_identifier
 type compiled_clause = {
   parameters : string;
   body : string;
+  equality_parameters : string list;
   value_terms : L.term list;
   calls : Order.StringSet.t;
 }
@@ -53,7 +54,7 @@ let rec call_type bound = function
       "(" ^ String.concat " → " (List.map (call_type bound) args @ ["(Call " ^ call_type bound result ^ ")"]) ^ ")"
   | typ -> Printer.print_type bound typ
 
-let compile env (signatures : E.signature M.t) (signature : E.signature) (rule : L.rule) at =
+let compile ~executable env (signatures : E.signature M.t) (signature : E.signature) (rule : L.rule) at =
   let rule = if signature.name = "$partition_"
     && (match M.find_opt "partition_" env.Translator.functions with Some (Translator.BuiltinRelation _) -> true | _ -> false) then
     match rule.conclusion.arguments with
@@ -67,9 +68,15 @@ let compile env (signatures : E.signature M.t) (signature : E.signature) (rule :
   let term = Printer.print_term bound_types in
   let prop = Printer.print_prop bound_types in
   let vars t = List.map fst (Translator.variables_in_term t) in
+  let equality_parameters = ref [] in
   let value_terms = ref [] in
   let calls = ref Order.StringSet.empty in
   let retain_values terms = value_terms := terms @ !value_terms in
+  let need_equality terms =
+    if executable then
+      let types = List.concat_map Translator.variables_in_term terms |> List.map snd in
+      equality_parameters := Translator.required_type_parameters signature.parameters types
+        @ !equality_parameters in
   let rec prop_vars = function
     | L.Forall (n, _, body) -> List.filter ((<>) n) (prop_vars body)
     | L.And (p,q) | L.Or (p,q) | L.Implies (p,q) | L.Iff (p,q) -> prop_vars p @ prop_vars q
@@ -82,7 +89,8 @@ let compile env (signatures : E.signature M.t) (signature : E.signature) (rule :
   let guard condition continuation =
     "(.bind (.guard (" ^ condition ^ ")) (fun (_ : Unit) => " ^ continuation ^ "))" in
   let call typ request =
-    "(.call ⟨" ^ call_type bound_types typ ^ ", " ^ request ^ "⟩)" in
+    if executable then "(.call (" ^ request ^ "))"
+    else "(.call ⟨" ^ call_type bound_types typ ^ ", " ^ request ^ "⟩)" in
   let value t = match t with
     | L.FunctionReference (L.Global n) ->
         if M.mem n signatures then "Call." ^ ident n
@@ -99,7 +107,7 @@ let compile env (signatures : E.signature M.t) (signature : E.signature) (rule :
         "(let " ^ ident n ^ " : " ^ call_type bound_types typ ^ " := " ^ actual
         ^ "; " ^ next (n :: bound) ^ ")"
     | L.Variable _ | L.Boolean _ | L.Number _ | L.Text _ ->
-        ensure bound pat; guard (actual ^ " = " ^ value pat) (next bound)
+        ensure bound pat; need_equality [pat]; guard (actual ^ " = " ^ value pat) (next bound)
     | L.Tuple (left, right) ->
         patterns bound [left; right] ["(" ^ actual ^ ").1"; "(" ^ actual ^ ").2"] next
     | L.StructureLiteral (_, fields) ->
@@ -138,7 +146,7 @@ let compile env (signatures : E.signature M.t) (signature : E.signature) (rule :
         ^ String.concat " " xs ^ " => " ^ patterns bound args xs next
         ^ (if exhaustive then "" else " | _ => .unmatch") ^ ")"
     | _ when ground bound pat ->
-        guard (actual ^ " = " ^ value pat) (next bound)
+        need_equality [pat]; guard (actual ^ " = " ^ value pat) (next bound)
     | _ -> Translator.unsupported at ("execution pattern in " ^ signature.name ^ "/" ^ rule.name)
   in
   let request bound (app : L.application) =
@@ -186,6 +194,7 @@ let compile env (signatures : E.signature M.t) (signature : E.signature) (rule :
         retain_values [lhs];
         pattern bound pattern_ (value lhs) (fun bound -> premises bound rest)
     | L.Prop (L.Iff (L.IsTrue (L.Variable (n, typ)), condition)) :: rest when not (List.mem n bound) ->
+        need_equality (Traversal.prop_terms condition);
         let vars = prop_vars condition in
         if not (List.for_all (fun n -> List.mem n bound) vars) then Translator.unsupported at ("unbound builtin condition " ^ signature.name);
         "(.orElse (let " ^ ident n ^ " : " ^ call_type bound_types typ ^ " := true; "
@@ -193,12 +202,13 @@ let compile env (signatures : E.signature M.t) (signature : E.signature) (rule :
         ^ ") (fun () => (let " ^ ident n ^ " : " ^ call_type bound_types typ ^ " := false; "
         ^ guard ("¬ (" ^ prop condition ^ ")") (premises (n :: bound) rest) ^ ")))"
     | (L.Prop condition | L.RuntimeCheck (condition, _)) as check :: rest ->
+        need_equality (Traversal.prop_terms condition);
         let variables = prop_vars condition in
         if not (List.for_all (fun n -> List.mem n bound) variables) then
           Translator.unsupported at ("unbound execution condition in " ^ signature.name ^ "/" ^ rule.name);
         (match check with
         | L.RuntimeCheck (_, message) ->
-            "(.bind (SpecTecExecution." ^ "require (" ^ prop condition ^ ") "
+            "(.bind (SpecTecExecution." ^ (if executable then "ExecutableAction." else "") ^ "require (" ^ prop condition ^ ") "
             ^ term (L.Text message) ^ ") (fun (_ : Unit) => " ^ premises bound rest ^ "))"
         | _ -> guard (prop condition) (premises bound rest))
   in
@@ -207,7 +217,23 @@ let compile env (signatures : E.signature M.t) (signature : E.signature) (rule :
   let parameters = List.map2 (fun name typ -> "(" ^ name ^ " : " ^ call_type bound_types typ ^ ")") args (E.input_types signature) in
   let body = patterns [] inputs args (fun bound -> premises bound rule.premises) in
   { parameters = String.concat " " parameters; body;
+    equality_parameters = !equality_parameters;
     value_terms = !value_terms; calls = !calls }
+
+(* Executable guards need equality instances that relational premises alone
+   did not require. Collect them from emitted tests, then propagate to callers
+   with the existing instance analysis before printing request constructors. *)
+let executable_equalities ~executable compiled declarations =
+  if not executable then declarations else
+  List.map (fun (d : L.located_declaration) -> match d.declaration with
+    | L.Relation r ->
+        let required = List.concat_map (fun (rule : L.rule) ->
+          match Hashtbl.find_opt compiled (r.name, rule.name) with
+          | Some clause -> clause.equality_parameters | None -> []) r.rules in
+        {d with declaration = L.Relation {r with equality_parameters =
+          List.filter (fun p -> List.mem p r.equality_parameters || List.mem p required) r.type_parameters}}
+    | _ -> d) declarations
+  |> Translator.equality_parameters
 
 let signature env external_names = function
   | L.Relation r ->
@@ -227,11 +253,11 @@ let signatures env external_names declarations =
   List.filter_map (signature env external_names) declarations
   |> List.fold_left (fun m s -> M.add s.E.name s m) M.empty
 
-let compile_declaration env signatures compiled (d : L.located_declaration) =
+let compile_declaration ~executable env signatures compiled (d : L.located_declaration) =
   match d.declaration with
   | L.Relation r when not (M.find r.name signatures).E.external_ ->
       List.iter (fun (rule : L.rule) -> Hashtbl.replace compiled (r.name, rule.L.name)
-        (compile env signatures (M.find r.name signatures) rule d.at)) r.rules
+        (compile ~executable env signatures (M.find r.name signatures) rule d.at)) r.rules
   | _ -> ()
 
 let declarations source ~keep_going =
@@ -252,7 +278,7 @@ let declarations source ~keep_going =
   env, Translator.equality_parameters
     (declarations @ Translator.generated_declarations env source declarations), diagnostics
 
-let emit source env ordered compiled =
+let emit ~executable source env ordered compiled =
   let declarations = List.concat_map Printer.declarations_in_group ordered in
   let relations = List.filter (function L.Relation _ -> true | _ -> false) declarations in
   let signatures = signatures env (external_names source) relations in
@@ -281,7 +307,7 @@ let emit source env ordered compiled =
     | _ -> false)
     || List.exists kernel_only_term (Traversal.term_children term) in
   let kernel_only_clause name (rule : L.rule) =
-    not (M.find name signatures).external_ &&
+    not executable && not (M.find name signatures).external_ &&
     let clause = Hashtbl.find compiled (name, rule.name) in
       (not (Order.StringSet.is_empty (Order.StringSet.inter kernel_only_calls
         (Order.StringSet.union clause.calls
@@ -345,11 +371,11 @@ let emit source env ordered compiled =
   let restore_instances eq print =
     String.concat " " (List.map (fun n -> "letI : _root_.DecidableEq " ^ ident n ^ " := eq_" ^ n ^ ";") eq
       @ List.map (fun n -> "letI : _root_.SpecTecPrint " ^ ident n ^ " := print_" ^ n ^ ";") print) in
-  let arms ?(only_extern = false) f = List.filter_map (function L.Relation r ->
+  let arms ?(only_extern = false) ?(typed = false) f = List.filter_map (function L.Relation r ->
     let s = M.find r.name signatures in
-    if only_extern && not s.external_ then None else Some ("  | ⟨_, @Call." ^ ident r.name ^ " " ^ String.concat " "
+    if only_extern && not s.external_ then None else Some ((if typed then "  | @Call." else "  | ⟨_, @Call.") ^ ident r.name ^ " " ^ String.concat " "
       ((if call_extern_types then ["_"] else []) @ List.map ident r.type_parameters @ instance_patterns r.equality_parameters r.print_parameters @ List.map fst (args s))
-      ^ "⟩ => " ^ restore_instances r.equality_parameters r.print_parameters ^ " " ^ f s r.name)
+      ^ (if typed then " => " else "⟩ => ") ^ restore_instances r.equality_parameters r.print_parameters ^ " " ^ f s r.name)
     | _ -> None) relations in
   (* Even a singleton polymorphic call family needs an index, not a promoted
      parameter: dispatch patterns bind its result type. *)
@@ -365,17 +391,30 @@ let emit source env ordered compiled =
       let clause_names = List.mapi (fun i _ -> r.name ^ ":clause:" ^ string_of_int i) r.rules in
       let clauses = List.map ident clause_names in
       let shared = type_binders r.type_parameters ^ instances r.equality_parameters r.print_parameters in
+      let output = call_type r.type_parameters (E.tuple_type (E.output_types s)) in
+      let applied_args = String.concat " " (List.map ident r.type_parameters @ List.map fst (args s)) in
       List.iter2 (fun name (rule : L.rule) ->
         let clause = Hashtbl.find compiled (r.name, rule.L.name) in
         let params, body = clause.parameters, clause.body in
-        add (declaration (kernel_only_clause r.name rule) ^ ident name ^ shared ^ " " ^ params ^ " : SpecTecExecution.Action.{1} Request :=\n  " ^ body)) clause_names r.rules;
+        if executable then (
+          add ("def " ^ ident (name ^ ":exec") ^ shared ^ " " ^ params
+            ^ " : SpecTecExecution.ExecutableAction Call " ^ output ^ " :=\n  " ^ body);
+          add ("def " ^ ident name ^ shared ^ " " ^ params
+            ^ " : SpecTecExecution.Action.{1} Request :=\n  ("
+            ^ ident (name ^ ":exec") ^ " " ^ applied_args ^ ").erase"))
+        else add (declaration (kernel_only_clause r.name rule) ^ ident name ^ shared ^ " " ^ params ^ " : SpecTecExecution.Action.{1} Request :=\n  " ^ body)) clause_names r.rules;
       let applied = List.map (fun name -> "(" ^ name ^ " " ^ String.concat " " (List.map ident r.type_parameters)
         ^ " " ^ String.concat " " (List.map fst (args s)) ^ ")") clauses in
       (* Inputs have already been applied to these clause actions. *)
       add (declaration (List.exists (kernel_only_clause r.name) r.rules) ^ ident (r.name ^ "_clauses") ^ shared ^ arg_binders r.type_parameters (args s)
         ^ " : List (SpecTecExecution.Action.{1} Request) :=\n  ["
         ^ String.concat ", " (applied @ abort_tail r.name) ^ "]");
-      ())
+      if executable then
+        add ("def " ^ ident (r.name ^ "_clauses:exec") ^ shared ^ arg_binders r.type_parameters (args s)
+          ^ " : List (SpecTecExecution.ExecutableAction Call " ^ output ^ ") :=\n  ["
+          ^ String.concat ", " (List.map (fun name ->
+              ident (name ^ ":exec") ^ " " ^ applied_args) clause_names
+              @ abort_tail r.name) ^ "]"))
     | _ -> ()) relations;
   (* Externs expose their unconditional inductive API. Their body chooses
      exactly the typed successes allowed by that API. *)
@@ -405,7 +444,16 @@ let emit source env ordered compiled =
       | names -> "(" ^ String.concat ", " names ^ ")" in
     ".choose " ^ call_type s.parameters (E.tuple_type outputs) ^ " (fun " ^ binder
       ^ " => " ^ extern_application s arguments ^ ")" in
-  (
+  if executable then (
+    add ("def specTecExecutableBody {α : Type} (request : Call α) : SpecTecExecution.ExecutableAction Call α :=\n"
+    ^ (if relations = [] then "  nomatch request" else "  match request with\n" ^ String.concat "\n" (arms ~typed:true (fun s name ->
+        if s.E.external_ then extern_choose s
+        else if List.mem name fresh_builtins then ".freshId" else
+        "SpecTecExecution.ExecutableAction.tryClauses (" ^ ident (name ^ "_clauses:exec") ^ " "
+          ^ String.concat " " (List.map ident s.parameters @ List.map fst (args s)) ^ ")"))));
+    add "def specTecExecutableProgram : SpecTecExecution.ExecutableProgram Call :=\n  ⟨fun request => specTecExecutableBody request⟩";
+    add "def Body (request : Request) : SpecTecExecution.Action.{1} Request :=\n  (specTecExecutableBody request.2).erase")
+  else (
   add (declaration kernel_only_body ^ "Body (request : Request) : SpecTecExecution.Action.{1} Request :=\n"
     ^ (if relations = [] then "  nomatch request.2" else "  match request with\n" ^ String.concat "\n" (arms (fun s name ->
       if s.E.external_ then extern_choose s
@@ -431,11 +479,13 @@ let emit source env ordered compiled =
     "-- SpecTecModule:decl:begin:" ^ n ^ "\n" ^ text ^ "\n-- SpecTecModule:decl:end:" ^ n) !groups in
   let suffix = "end SpecTec" in
   assert (String.ends_with ~suffix base);
-  Execution_support.source ^ "\n\nset_option maxHeartbeats 4000000\nset_option maxRecDepth 4096\n\n"
+  Execution_support.source
+  ^ (if executable then "\n" ^ Execution_support.run_eval_source else "")
+  ^ "\n\nset_option maxHeartbeats 4000000\nset_option maxRecDepth 4096\n\n"
   ^ String.sub base 0 (String.length base - String.length suffix)
   ^ String.concat "\n\n" extras ^ "\n\nend SpecTec"
 
-let transpile_all source =
+let transpile_all ?(executable = false) source =
   let env, declarations, diagnostics = declarations source ~keep_going:true in
   let signatures = signatures env (external_names source)
     (List.map (fun d -> d.L.declaration) declarations) in
@@ -448,15 +498,16 @@ let transpile_all source =
   let compiled = Hashtbl.create 32 in
   let declarations, failed, errors = List.fold_left (fun (ds, failed, errors) d ->
     if not (Order.StringSet.mem (Order.defined_name d.L.declaration) retained) then ds, failed, errors
-    else try compile_declaration env signatures compiled d; ds @ [d], failed, errors
+    else try compile_declaration ~executable env signatures compiled d; ds @ [d], failed, errors
     with Translator.Unsupported_il error -> ds, d.L.at :: failed, errors @ [error])
     ([], [], []) declarations in
   (* Helpers share the region of their IL definition; drop them with it. *)
   let declarations = List.filter (fun d -> not (List.mem d.L.at failed)) declarations in
+  let declarations = executable_equalities ~executable compiled declarations in
   let ordered, errors_order = Order.order_all declarations in
-  emit source env ordered compiled, diagnostics @ errors_dependency @ errors @ errors_order
+  emit ~executable source env ordered compiled, diagnostics @ errors_dependency @ errors @ errors_order
 
-let transpile source =
+let transpile ?(executable = false) source =
   try
     let env, declarations, _ = declarations source ~keep_going:false in
     let* ordered = Order.order declarations in
@@ -464,6 +515,9 @@ let transpile source =
       (List.map (fun d -> d.L.declaration) declarations) in
     Printer.configure (List.map (fun d -> d.L.declaration) declarations);
     let compiled = Hashtbl.create 32 in
-    List.iter (compile_declaration env signatures compiled) declarations;
-    Ok (emit source env ordered compiled)
+    List.iter (compile_declaration ~executable env signatures compiled) declarations;
+    let* ordered = if executable then
+      Order.order (executable_equalities ~executable compiled declarations)
+      else Ok ordered in
+    Ok (emit ~executable source env ordered compiled)
   with Translator.Unsupported_il d -> Error d

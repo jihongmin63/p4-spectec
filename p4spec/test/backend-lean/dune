@@ -4,6 +4,21 @@
  (libraries pass p4 runtime diagnostic util lang bignum.bigint))
 
 (rule
+ (target run-eval.lean)
+ (deps ../../lib/lean-skeleton/lean/SpecTecExecution.lean
+       ../../lib/lean-skeleton/lean/SpecTecRunEval.lean run-eval-proof.lean)
+ (action (with-stdout-to %{target}
+  (progn
+   (cat %{dep:../../lib/lean-skeleton/lean/SpecTecExecution.lean})
+   (cat %{dep:../../lib/lean-skeleton/lean/SpecTecRunEval.lean})
+   (cat %{dep:run-eval-proof.lean})))))
+
+(rule
+ (alias backend-lean)
+ (deps run-eval.lean)
+ (action (run lean run-eval.lean)))
+
+(rule
  (alias backend-lean)
  (deps check_direct_relations.py extern-model.watsup extern-direct-proof.lean
   case-obligation.watsup case-empty.p4 case-semicolon.p4 case-oracle.lean)
@@ -396,6 +411,7 @@
 (rule
  (alias backend-lean)
  (deps check_ordered_relations.py ordered-choice.watsup ordered-choice-proof.lean
+   run-eval-generated-proof.lean
    ordered-functions.watsup ordered-functions-proof.lean ordered-extern.watsup ordered-extern-proof.lean
    extern-singletons.watsup extern-singletons-proof.lean
    ordered-errors.watsup ordered-errors-proof.lean ordered-downcast.watsup ordered-downcast-proof.lean

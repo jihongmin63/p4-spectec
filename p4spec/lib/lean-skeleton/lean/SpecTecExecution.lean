@@ -1,4 +1,5 @@
-/- Relational ordered execution with a shared fresh supply. -/
+/- Relational ordered execution with a shared fresh supply.
+   SpecTecRunEval supplies the optional executable refinement. -/
 set_option autoImplicit false
 
 namespace SpecTecExecution

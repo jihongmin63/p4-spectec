@@ -22,14 +22,17 @@
   main)
  (libraries lang domain util pass diagnostic runtime p4 p4spectec interface unix))
 
-; Embed the independently checked Lean library as an OCaml string.
+; Embed the independently checked Lean libraries as separate OCaml strings.
 (rule
  (target execution_support.ml)
- (deps lean/SpecTecExecution.lean)
+ (deps lean/SpecTecExecution.lean lean/SpecTecRunEval.lean)
  (action
   (with-stdout-to
    %{target}
    (progn
     (echo "let source = {spectec_exec|")
     (cat %{dep:lean/SpecTecExecution.lean})
-    (echo "|spectec_exec}\n")))))
+    (echo "|spectec_exec}\n")
+    (echo "let run_eval_source = {spectec_run_eval|")
+    (cat %{dep:lean/SpecTecRunEval.lean})
+    (echo "|spectec_run_eval}\n")))))

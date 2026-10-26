@@ -6,6 +6,7 @@ type options = {
   cases : (Case_obligation.expectation * string * string option) list;
   keep_going : bool;
   ordered : bool;
+  executable : bool;
   obligations_only : bool;
   dump_output : string option;
   check_rejection : string option;
@@ -17,7 +18,7 @@ type options = {
 }
 
 let usage =
-  "Usage: lean-skeleton [--relation-semantics ordered|declarative] [--keep-going] [--obligations-only] \
+  "Usage: lean-skeleton [--relation-semantics ordered|declarative] [--executable] [--keep-going] [--obligations-only] \
    [--case P4 EXPECTED | --reject-case P4 | --manifest TSV]... \
    [--case-range START COUNT] \
    [--emit-modules DIR | --emit-cases DIR] [--module-split-bytes N] \
@@ -37,6 +38,7 @@ let parse_options arguments =
     | "--relation-semantics" :: _ ->
         Error "--relation-semantics requires ordered or declarative"
     | "--keep-going" :: rest -> loop { options with keep_going = true } rest
+    | "--executable" :: rest -> loop { options with executable = true } rest
     | "--obligations-only" :: rest ->
         loop { options with obligations_only = true } rest
     | "--emit-modules" :: directory :: rest when directory <> "" ->
@@ -79,7 +81,7 @@ let parse_options arguments =
         loop { options with paths_spec = path :: options.paths_spec } rest
   in
   loop { paths_spec = []; includes_p4 = []; cases = [];
-         ordered = true; keep_going = false; obligations_only = false; dump_output = None;
+         ordered = true; executable = false; keep_going = false; obligations_only = false; dump_output = None;
          check_rejection = None; batch_cases = None; case_range = None;
          emit_modules = None; emit_cases = None; module_split_bytes = None } arguments
 
@@ -207,6 +209,11 @@ let () =
     | Ok options -> options
     | Error message -> prerr_endline message; exit 2
   in
+  if options.executable &&
+     (not options.ordered || options.obligations_only || options.emit_cases <> None ||
+      options.dump_output <> None || options.check_rejection <> None || options.batch_cases <> None) then (
+    prerr_endline "--executable requires ordered translation; it cannot combine with declarative, obligations-only, case export or oracle modes";
+    exit 2);
   if options.paths_spec = [] ||
      (options.obligations_only && options.cases = []) then (
     prerr_endline usage;
@@ -293,12 +300,12 @@ let () =
         if options.obligations_only then Ok (obligations, [])
         else if options.keep_going then
           let (lean_code, diagnostics) : string * Diagnostic.t list =
-            Pipeline.transpile_all ~ordered:options.ordered spec_il
+            Pipeline.transpile_all ~ordered:options.ordered ~executable:options.executable spec_il
           in
           Ok (Printer.append_obligations lean_code obligations,
               diagnostics)
         else
-          let* lean_code = Pipeline.transpile ~ordered:options.ordered spec_il in
+          let* lean_code = Pipeline.transpile ~ordered:options.ordered ~executable:options.executable spec_il in
           Ok (Printer.append_obligations lean_code obligations,
               []))
         | _ -> assert false)

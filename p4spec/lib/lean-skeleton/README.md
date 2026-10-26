@@ -40,7 +40,10 @@ native runtime tag limit (243 for constructors with runtime fields). Only clause
 that reference those constructors, their clause lists, and the dependent `Body` are
 marked `noncomputable` in default output. Nullary calls and unrelated clauses
 keep ordinary `def`; all definitions remain available to kernel proofs.
-
+`--executable` additionally supports native execution for specifications within
+the runtime's limits, using the typed refinement in
+[`SpecTecRunEval.lean`](lean/SpecTecRunEval.lean); see
+[Executable actions and soundness](#executable-actions-and-soundness).
 
 `Eval` supplies execution
 constructors, `tryClauses_success_iff` identifies the selected clause,
@@ -165,6 +168,81 @@ Uniqueness concerns generated names within one run. The runtime's `FRESH__`
 prefix policy does not avoid arbitrary input names. Fresh support preserves
 that policy; it does not add input-name scanning or an alpha-equivalence
 quotient. Existing fixed oracle output terms retain their exact strings.
+
+## Executable actions and soundness
+
+Pass `--executable` with ordered translation to generate
+`specTecExecutableProgram`. Its clauses have type
+`ExecutableAction Call α`: calls and binds retain their result type,
+and guards carry constructive `Decidable` instances. The existing clause names,
+`Body` and public relation predicates remain available through
+erasure into `Action` and `Eval`. Default output and declarative mode keep
+their existing representation. The executable option is incompatible with
+declarative, obligations-only, corpus export (`--emit-cases`), and oracle modes.
+Default ordered output embeds only `SpecTecExecution.lean`; `--executable`
+also embeds `SpecTecRunEval.lean`. Standalone output and the `SpecTecCore`
+module use the same selection, including each selected library once.
+Executable generic guards add the required `DecidableEq` parameters and pass
+them through callers; data argument order is unchanged.
+
+For the generated `ordered-choice.watsup` example:
+
+```lean
+namespace SpecTec
+open SpecTecExecution
+
+#eval runEval specTecExecutableProgram 20
+  (.call (Call.Caller 7)) 0
+-- SpecTecExecution.RunResult.done (SpecTecExecution.Outcome.success 30) 0
+
+example : Caller 7 30 :=
+  ⟨0, runEval_sound specTecExecutableProgram 20
+    (.call (Call.Caller 7)) 0 (.success 30) 0 rfl⟩
+end SpecTec
+```
+
+`runEval` is a total definition structurally recursive on `Nat` fuel. At zero it
+returns `RunResult.outOfFuel`; at a successor each subevaluation receives the
+predecessor. Fuel bounds evaluation-tree height, not total instructions or the
+work inside a guard or pure function. The fresh supply is a separate argument.
+
+`RunResult.done outcome finalSupply` records success, unmatch, or abort.
+`unsupportedChoice` reports an encountered `.choose` plan;
+`runEval` cannot execute extern calls. Neither fuel
+exhaustion nor an unsupported choice selects fallback or counts as
+successful negation. Only completed unmatch selects fallback, which continues
+from that execution's final supply. Bind and negation also retain consumed supply.
+
+Externs remain abstract relations. Their generated `.choose` plans permit
+typed successes only; this minimal executable refinement reports them as
+unsupported instead of selecting a result.
+
+The shared theorem `runEval_sound` proves:
+
+```lean
+runEval program fuel plan start = .done outcome final →
+  Eval program.erase plan.erase start outcome.pack final
+```
+
+It applies to all completed outcomes, with no determinism assumption and no
+new axioms, `sorry`, unsafe casts, or `native_decide` in its proof. Concrete
+examples use kernel reduction (`rfl`) for the computation premise.
+`runEval_mono` proves that increasing fuel preserves any completed outcome and
+final supply. This is soundness relative to the generated `Eval` semantics;
+it is not a formal verification of the OCaml
+translator. Completeness and native execution of the entire P4 specification
+are outside this feature. In particular, `--executable` does not remove Lean's
+large-constructor-datatype runtime limits. Guard compilation must find an
+executable decider; there is no classical fallback.
+
+Run the checked generated example:
+
+```sh
+_build/default/p4spec/lib/lean-skeleton/main.exe --executable \
+  p4spec/test/backend-lean/ordered-choice.watsup > /tmp/run-eval-example.lean
+cat p4spec/test/backend-lean/run-eval-generated-proof.lean >> /tmp/run-eval-example.lean
+ELAN_TOOLCHAIN=leanprover/lean4:v4.34.1 lean /tmp/run-eval-example.lean
+```
 
 ## Modular Lean output
 
