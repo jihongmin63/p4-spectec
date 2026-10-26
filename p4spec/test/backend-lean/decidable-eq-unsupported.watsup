@@ -1,0 +1,3 @@
+syntax tree<K> =
+  | LEAF K
+  | CHILD tree<K*>*

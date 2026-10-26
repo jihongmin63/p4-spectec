@@ -1,0 +1,9 @@
+error: Lean skeleton does not support DecidableEq non-uniform recursive type Atree(BList(PK)) after Atree(PK)
+  --> ./decidable-eq-unsupported.watsup:2:1
+  |
+2 |   | LEAF K
+  | ^^^^^^^^^^
+3 |   | CHILD tree<K*>*
+  | ^^^^^^^^^^^^^^^^^^^
+  |
+  | source: lean

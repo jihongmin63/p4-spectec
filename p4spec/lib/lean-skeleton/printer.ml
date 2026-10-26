@@ -90,7 +90,8 @@ let rec print_term (bound : string list) (term : L.term) : string =
   | Projection (name, field, value) ->
       "(" ^ print_global_name bound name ^ "." ^ print_identifier field ^ " " ^ print value ^ ")"
   | Index (base, index) -> "(" ^ print base ^ "[" ^ print index ^ "]?)"
-  | Decide prop -> "(_root_.Decidable.decide " ^ print_prop bound prop ^ ")"
+  | Decide (_, prop) ->
+      "(_root_.Decidable.decide " ^ print_prop bound prop ^ ")"
 
 and print_prop (bound : string list) (prop : L.prop) : string =
   match prop with
@@ -121,6 +122,7 @@ and print_application (bound : string list) (application : L.application) : stri
   in
   let arguments : string list =
     List.map (print_type bound) application.type_arguments
+    @ List.map (fun _ -> "_") application.instance_arguments
     @ List.map (print_term bound) application.arguments
   in
   match arguments with
@@ -175,13 +177,18 @@ let print_builtin (builtin : L.builtin) : string =
       (fun name -> "{" ^ print_identifier name ^ " : Type}")
       builtin.type_parameters
   in
+  let equality_parameters : string list =
+    List.map
+      (fun name -> "[_root_.DecidableEq " ^ print_identifier name ^ "]")
+      builtin.equality_parameters
+  in
   let parameters : string list =
     List.mapi
       (fun index typ ->
         "(arg" ^ string_of_int index ^ " : " ^ print_type [] typ ^ ")")
       builtin.parameters
   in
-  let binders : string list = type_parameters @ parameters in
+  let binders : string list = type_parameters @ equality_parameters @ parameters in
   let binders : string =
     match binders with [] -> "" | _ -> " " ^ String.concat " " binders
   in
@@ -211,30 +218,39 @@ let print_type_parameters (parameters : string list) : string =
   | [] -> ""
   | _ -> " (" ^ String.concat " " (List.map print_identifier parameters) ^ " : Type)"
 
-let print_declaration (declaration : L.declaration) : string =
+let print_declaration ?(derive_decidable_eq = false)
+    (declaration : L.declaration) : string =
+  let deriving (printed : string) : string =
+    if derive_decidable_eq then printed ^ "\nderiving _root_.DecidableEq"
+    else printed
+  in
   match declaration with
   | Datatype { name; type_parameters; constructors } ->
-      String.concat "\n"
-        (Printf.sprintf "inductive %s%s : Type where" (print_identifier name)
-          (print_type_parameters type_parameters)
-        :: List.map (print_constructor type_parameters) constructors)
+      deriving
+        (String.concat "\n"
+          (Printf.sprintf "inductive %s%s : Type where" (print_identifier name)
+            (print_type_parameters type_parameters)
+          :: List.map (print_constructor type_parameters) constructors))
   | TypeAlias { name; type_parameters; body } ->
       Printf.sprintf "abbrev %s%s : Type := %s" (print_identifier name)
         (print_type_parameters type_parameters) (print_type type_parameters body)
   | Structure { name; fields } ->
       let bound : string list = List.map fst fields in
-      String.concat "\n"
-        (Printf.sprintf "structure %s : Type where" (print_identifier name)
-        :: List.map
-             (fun (field_name, typ) ->
-               let printed : string = print_identifier field_name in
-               let quoted : string =
-                 if String.starts_with ~prefix:"«" printed then printed
-                 else "«" ^ printed ^ "»"
-               in
-               "  (" ^ quoted ^ " : " ^ print_type bound typ ^ ")")
-             fields)
-  | Relation { name; type_parameters; argument_types; rules; notation = _ } ->
+      deriving
+        (String.concat "\n"
+          (Printf.sprintf "structure %s : Type where" (print_identifier name)
+          :: List.map
+               (fun (field_name, typ) ->
+                 let printed : string = print_identifier field_name in
+                 let quoted : string =
+                   if String.starts_with ~prefix:"«" printed then printed
+                   else "«" ^ printed ^ "»"
+                 in
+                 "  (" ^ quoted ^ " : " ^ print_type bound typ ^ ")")
+               fields))
+  | Relation
+      { name; type_parameters; equality_parameters; argument_types; rules;
+        notation = _ } ->
       let signature : string =
         String.concat " → "
           (List.map (print_type type_parameters) argument_types @ [ "Prop" ])
@@ -243,7 +259,10 @@ let print_declaration (declaration : L.declaration) : string =
         String.concat ""
           (List.map
              (fun name -> " {" ^ print_identifier name ^ " : Type}")
-             type_parameters)
+             type_parameters
+          @ List.map
+              (fun name -> " [_root_.DecidableEq " ^ print_identifier name ^ "]")
+              equality_parameters)
       in
       let declaration : string =
         String.concat "\n"
@@ -293,7 +312,174 @@ let declaration_notation (declaration : L.declaration) : string list =
   | Relation { name; notation = Some parts; _ } -> [ print_notation name parts ]
   | _ -> []
 
-let print_group (group : L.declaration_group) : string =
+let print_equality_parameters (parameters : string list) : string =
+  String.concat ""
+    (List.map
+       (fun parameter ->
+         " {" ^ print_identifier parameter ^ " : Type} [_root_.DecidableEq "
+         ^ print_identifier parameter ^ "]")
+       parameters)
+
+let equality_call (shapes : L.equality_shape list) (typ : L.type_ref)
+    (left : string) (right : string) : string =
+  match
+    List.find_opt
+      (fun (shape : L.equality_shape) -> shape.equality_type = typ)
+      shapes
+  with
+  | Some shape ->
+      print_identifier shape.equality_name ^ " " ^ left ^ " " ^ right
+  | None -> "_root_.decEq " ^ left ^ " " ^ right
+
+let equality_result (shapes : L.equality_shape list)
+    (indent : string) (fields : L.type_ref list) : string =
+  match fields with
+  | [] -> "_root_.Decidable.isTrue rfl"
+  | _ ->
+      let hypotheses : string list =
+        List.mapi (fun index _ -> "h" ^ string_of_int index) fields
+      in
+      let true_proof : string =
+        "_root_.Decidable.isTrue (by "
+        ^ String.concat "; " (List.map (fun name -> "cases " ^ name) hypotheses)
+        ^ "; rfl)"
+      in
+      let rec nested (index : int) (indent : string)
+          (remaining : L.type_ref list) : string =
+        match remaining with
+        | [] -> true_proof
+        | typ :: rest ->
+            let name : string = "h" ^ string_of_int index in
+            "match "
+            ^ equality_call shapes typ ("x" ^ string_of_int index)
+                ("y" ^ string_of_int index)
+            ^ " with\n" ^ indent ^ "| _root_.Decidable.isTrue " ^ name ^ " =>\n"
+            ^ indent ^ "  " ^ nested (index + 1) (indent ^ "  ") rest
+            ^ "\n" ^ indent ^ "| _root_.Decidable.isFalse " ^ name
+            ^ " => _root_.Decidable.isFalse (by intro e; injection e; contradiction)"
+      in
+      nested 0 indent fields
+
+let constructor_pattern (constructor : L.constructor) (prefix : string) : string =
+  let arguments : string list =
+    List.mapi (fun index _ -> prefix ^ string_of_int index) constructor.arguments
+  in
+  "." ^ print_identifier constructor.name
+  ^ match arguments with [] -> "" | _ -> " " ^ String.concat " " arguments
+
+let constructor_wildcard (constructor : L.constructor) : string =
+  "." ^ print_identifier constructor.name
+  ^ String.concat "" (List.map (fun _ -> " _") constructor.arguments)
+
+let print_datatype_equality (shapes : L.equality_shape list)
+    (constructors : L.constructor list) : string =
+  let cases : string list =
+    List.map
+      (fun (constructor : L.constructor) ->
+        "    | " ^ constructor_pattern constructor "x" ^ ", "
+        ^ constructor_pattern constructor "y" ^ " =>\n      "
+        ^ equality_result shapes "      " constructor.arguments)
+      constructors
+  in
+  match constructors with
+  | [] -> "nomatch a"
+  | [ _ ] -> "match a, b with\n" ^ String.concat "\n" cases
+  | _ ->
+      let mismatches : string list =
+        List.concat_map
+          (fun (left : L.constructor) ->
+            List.filter_map
+              (fun (right : L.constructor) ->
+                if left.name = right.name then None
+                else
+                  Some
+                    ("    | " ^ constructor_wildcard left ^ ", "
+                    ^ constructor_wildcard right ^ " => nomatch hc"))
+              constructors)
+          constructors
+      in
+      "if hc : a.ctorIdx = b.ctorIdx then\n"
+      ^ "    match a, b with\n"
+      ^ String.concat "\n" (cases @ mismatches)
+      ^ "\n  else _root_.Decidable.isFalse (fun e => hc (e ▸ rfl))"
+
+let print_structure_equality (shapes : L.equality_shape list)
+    (fields : (string * L.type_ref) list) : string =
+  let variables (prefix : string) : string =
+    "⟨" ^ String.concat ", "
+      (List.mapi (fun index _ -> prefix ^ string_of_int index) fields) ^ "⟩"
+  in
+  "match a, b with\n  | " ^ variables "x" ^ ", " ^ variables "y" ^ " =>\n    "
+  ^ equality_result shapes "    " (List.map snd fields)
+
+let print_list_equality (shapes : L.equality_shape list)
+    (element : L.type_ref) : string =
+  "match a, b with\n"
+  ^ "  | [], [] => _root_.Decidable.isTrue rfl\n"
+  ^ "  | x0 :: x1, y0 :: y1 =>\n    "
+  ^ equality_result shapes "    "
+      [ element; L.BuiltinType ("List", [ element ]) ]
+  ^ "\n  | [], _ :: _ => _root_.Decidable.isFalse (by intro e; cases e)\n"
+  ^ "  | _ :: _, [] => _root_.Decidable.isFalse (by intro e; cases e)"
+
+let print_option_equality (shapes : L.equality_shape list)
+    (element : L.type_ref) : string =
+  "match a, b with\n"
+  ^ "  | _root_.Option.none, _root_.Option.none => _root_.Decidable.isTrue rfl\n"
+  ^ "  | _root_.Option.some x0, _root_.Option.some y0 =>\n    "
+  ^ equality_result shapes "    " [ element ]
+  ^ "\n  | _root_.Option.none, _root_.Option.some _ => _root_.Decidable.isFalse (by intro e; cases e)\n"
+  ^ "  | _root_.Option.some _, _root_.Option.none => _root_.Decidable.isFalse (by intro e; cases e)"
+
+let print_pair_equality (shapes : L.equality_shape list)
+    (left : L.type_ref) (right : L.type_ref) : string =
+  "match a, b with\n  | (x0, x1), (y0, y1) =>\n    "
+  ^ equality_result shapes "    " [ left; right ]
+
+let print_equality_shape (equality : L.manual_equality)
+    (shape : L.equality_shape) : string =
+  let parameters : string =
+    print_equality_parameters equality.equality_type_parameters
+  in
+  let bound : string list = equality.equality_type_parameters in
+  let body : string =
+    match shape.equality_kind with
+    | EqualityDatatype constructors ->
+        print_datatype_equality equality.equality_shapes constructors
+    | EqualityStructure fields ->
+        print_structure_equality equality.equality_shapes fields
+    | EqualityList element ->
+        print_list_equality equality.equality_shapes element
+    | EqualityOption element ->
+        print_option_equality equality.equality_shapes element
+    | EqualityPair (left, right) ->
+        print_pair_equality equality.equality_shapes left right
+  in
+  Printf.sprintf "def %s%s (a b : %s) : _root_.Decidable (a = b) :=\n  %s\ntermination_by structural a"
+    (print_identifier shape.equality_name) parameters
+    (print_type bound shape.equality_type) body
+
+let print_manual_equality (equality : L.manual_equality) : string =
+  let functions : string =
+    "mutual\n\n"
+    ^ String.concat "\n\n"
+        (List.map (print_equality_shape equality) equality.equality_shapes)
+    ^ "\n\nend"
+  in
+  let parameters : string =
+    print_equality_parameters equality.equality_type_parameters
+  in
+  let bound : string list = equality.equality_type_parameters in
+  let instances : string list =
+    List.map
+      (fun (typ, name) ->
+        Printf.sprintf "instance%s : _root_.DecidableEq %s := %s" parameters
+          (print_type bound typ) (print_identifier name))
+      equality.equality_instances
+  in
+  String.concat "\n\n" (functions :: instances)
+
+let rec print_group (group : L.declaration_group) : string =
   match group with
   | Single declaration ->
       String.concat "\n\n"
@@ -304,6 +490,19 @@ let print_group (group : L.declaration_group) : string =
          ^ String.concat "\n\n" (List.map print_declaration declarations)
          ^ "\n\nend")
         :: List.concat_map declaration_notation declarations)
+  | DerivingDecidableEq (Single declaration) ->
+      String.concat "\n\n"
+        (print_declaration ~derive_decidable_eq:true declaration
+         :: declaration_notation declaration)
+  | DerivingDecidableEq (Mutual declarations) ->
+      String.concat "\n\n"
+        (("mutual\n\n"
+         ^ String.concat "\n\n"
+             (List.map (print_declaration ~derive_decidable_eq:true) declarations)
+         ^ "\n\nend")
+        :: List.concat_map declaration_notation declarations)
+  | DerivingDecidableEq group -> print_group group
+  | ManualDecidableEq equality -> print_manual_equality equality
 
 let print (program : L.program) : string =
   "set_option autoImplicit false\nset_option linter.unusedVariables false\n\nnamespace SpecTec\n\n"

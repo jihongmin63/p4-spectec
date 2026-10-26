@@ -9,7 +9,7 @@ let pair (left : L.type_ref) (right : L.type_ref) : L.type_ref =
 let definition (name : string) (type_parameters : string list)
     (parameters : L.type_ref list) (result : L.type_ref) (body : string) :
     (L.builtin, string) result =
-  Ok { name; type_parameters; parameters; result; body }
+  Ok { name; type_parameters; equality_parameters = []; parameters; result; body }
 
 let translate (builtin_name : string) (type_parameters : string list) :
     (L.builtin, string) result =

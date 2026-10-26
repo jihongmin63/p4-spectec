@@ -27,7 +27,8 @@ let rec map_term_types (map : L.type_ref -> L.type_ref) (term : L.term) : L.term
       L.StructureUpdate (map typ, recurse base, field, recurse value)
   | Projection (name, field, value) -> L.Projection (name, field, recurse value)
   | Index (base, index) -> L.Index (recurse base, recurse index)
-  | Decide prop -> L.Decide (map_prop_types map prop)
+  | Decide (types, prop) ->
+      L.Decide (List.map map types, map_prop_types map prop)
   | Boolean _ | Text _ | FunctionReference _ -> term
 
 and map_prop_types (map : L.type_ref -> L.type_ref) (prop : L.prop) : L.prop =
@@ -47,6 +48,7 @@ and map_prop_types (map : L.type_ref -> L.type_ref) (prop : L.prop) : L.prop =
 and map_application_types (map : L.type_ref -> L.type_ref)
     (application : L.application) : L.application =
   { application with type_arguments = List.map map application.type_arguments;
+    instance_arguments = List.map map application.instance_arguments;
     arguments = List.map (map_term_types map) application.arguments }
 
 let map_premise_types (map : L.type_ref -> L.type_ref) (premise : L.premise) :
@@ -78,7 +80,7 @@ let term_children (term : L.term) : L.term list =
   | Binary (_, left, right) | Tuple (left, right) | Index (left, right) -> [ left; right ]
   | StructureLiteral (_, fields) -> List.map snd fields
   | StructureUpdate (_, base, _, value) -> [ base; value ]
-  | Decide prop -> prop_terms prop
+  | Decide (_, prop) -> prop_terms prop
   | Variable _ | Boolean _ | Number _ | Text _ | FunctionReference _ -> []
 
 let premise_terms (premise : L.premise) : L.term list =
@@ -86,3 +88,85 @@ let premise_terms (premise : L.premise) : L.term list =
   | Holds application | NotHolds (application, _)
   | NotExists (_, application, _) -> application.arguments
   | Prop prop -> prop_terms prop
+
+let rec term_applications (term : L.term) : L.application list =
+  let nested : L.application list =
+    List.concat_map term_applications (term_children term)
+  in
+  match term with L.Apply application -> application :: nested | _ -> nested
+
+let premise_applications (premise : L.premise) : L.application list =
+  let direct : L.application list =
+    match premise with
+    | L.Holds application | L.NotHolds (application, _)
+    | L.NotExists (_, application, _) -> [ application ]
+    | L.Prop _ -> []
+  in
+  direct @ List.concat_map term_applications (premise_terms premise)
+
+let rec map_term_applications (map : L.application -> L.application)
+    (term : L.term) : L.term =
+  let recurse : L.term -> L.term = map_term_applications map in
+  match term with
+  | Variable _ | Boolean _ | Number _ | Text _ | FunctionReference _ -> term
+  | Constructor (reference, arguments) ->
+      L.Constructor (reference, List.map recurse arguments)
+  | Apply application ->
+      L.Apply
+        (map
+           { application with
+             arguments = List.map recurse application.arguments })
+  | Coerce (name, source, target, value) ->
+      L.Coerce (name, source, target, recurse value)
+  | MembershipTest (name, source, target, cases, exhaustive, value) ->
+      L.MembershipTest
+        (name, source, target, cases, exhaustive, recurse value)
+  | Lambda (name, typ, body) -> L.Lambda (name, typ, recurse body)
+  | Native (name, arguments) -> L.Native (name, List.map recurse arguments)
+  | Unary (operator, value) -> L.Unary (operator, recurse value)
+  | Binary (operator, left, right) ->
+      L.Binary (operator, recurse left, recurse right)
+  | Typed (value, typ) -> L.Typed (recurse value, typ)
+  | Tuple (left, right) -> L.Tuple (recurse left, recurse right)
+  | ListLiteral values -> L.ListLiteral (List.map recurse values)
+  | StructureLiteral (typ, fields) ->
+      L.StructureLiteral
+        (typ, List.map (fun (name, value) -> name, recurse value) fields)
+  | StructureUpdate (typ, base, field, value) ->
+      L.StructureUpdate (typ, recurse base, field, recurse value)
+  | Projection (name, field, value) ->
+      L.Projection (name, field, recurse value)
+  | Index (base, index) -> L.Index (recurse base, recurse index)
+  | Decide (types, prop) ->
+      L.Decide (types, map_prop_applications map prop)
+
+and map_prop_applications (map : L.application -> L.application)
+    (prop : L.prop) : L.prop =
+  let recurse : L.prop -> L.prop = map_prop_applications map in
+  let term : L.term -> L.term = map_term_applications map in
+  match prop with
+  | Comparison (operator, left, right) ->
+      L.Comparison (operator, term left, term right)
+  | Membership (element, collection) ->
+      L.Membership (term element, term collection)
+  | IsTrue value -> L.IsTrue (term value)
+  | Predicate value -> L.Predicate (term value)
+  | Not value -> L.Not (recurse value)
+  | And (left, right) -> L.And (recurse left, recurse right)
+  | Or (left, right) -> L.Or (recurse left, recurse right)
+  | Implies (left, right) -> L.Implies (recurse left, recurse right)
+  | Iff (left, right) -> L.Iff (recurse left, recurse right)
+
+let map_premise_applications (map : L.application -> L.application)
+    (premise : L.premise) : L.premise =
+  let application (value : L.application) : L.application =
+    map
+      { value with
+        arguments = List.map (map_term_applications map) value.arguments }
+  in
+  match premise with
+  | Holds value -> L.Holds (application value)
+  | NotHolds (value, at) -> L.NotHolds (application value, at)
+  | NotExists (binders, value, at) ->
+      L.NotExists (binders, application value, at)
+  | Prop prop -> L.Prop (map_prop_applications map prop)
