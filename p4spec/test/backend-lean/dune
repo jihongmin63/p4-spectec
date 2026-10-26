@@ -3,6 +3,23 @@
  (modules print_diff)
  (libraries pass p4 runtime diagnostic util lang bignum.bigint))
 
+(executable
+ (name builtin_oracle)
+ (modules builtin_oracle)
+ (libraries builtin runtime util domain lang bignum.bigint))
+
+(rule
+ (target builtin_oracle.actual)
+ (action
+  (with-stdout-to builtin_oracle.actual
+   (run %{exe:builtin_oracle.exe}))))
+
+(rule
+ (alias backend-lean)
+ (deps builtin_oracle.actual)
+ (action
+  (diff builtin_oracle.expected builtin_oracle.actual)))
+
 (rule
  (target tuple.lean)
  (deps tuple.watsup tuple-proof.lean)
@@ -16,6 +33,20 @@
  (alias backend-lean)
  (deps tuple.lean)
  (action (run lean tuple.lean)))
+
+(rule
+ (target notation.lean)
+ (deps notation.watsup notation-proof.lean)
+ (action
+  (with-stdout-to notation.lean
+   (progn
+    (run %{exe:../../lib/lean-skeleton/main.exe} %{dep:notation.watsup})
+    (cat %{dep:notation-proof.lean})))))
+
+(rule
+ (alias backend-lean)
+ (deps notation.lean)
+ (action (run lean notation.lean)))
 
 (rule
  (target update.lean)

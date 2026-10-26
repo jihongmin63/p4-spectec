@@ -11,7 +11,9 @@ let names : string list =
   [ "find_map"; "find_maps"; "add_map"; "adds_map"; "update_map"; "assoc_";
     "distinct_"; "partition_"; "max_nat"; "min_nat"; "strip_prefix";
     "strip_suffix"; "shl"; "shr"; "shr_arith"; "int_to_bitstr";
-    "bitstr_to_int"; "print_" ]
+    "bitstr_to_int"; "split_text"; "sub_set"; "eq_set";
+    "bits_to_int_signed"; "int_to_bits_unsigned"; "int_to_bits_signed";
+    "bitacc"; "bitacc_replace"; "text_to_int"; "print_" ]
 
 let is_relation (name : string) : bool = List.mem name names
 
@@ -25,6 +27,8 @@ let key : L.type_ref = L.TypeParameter "K"
 let value : L.type_ref = L.TypeParameter "V"
 let map : L.type_ref = L.Applied ("map", [ key; value ])
 let pair : L.type_ref = L.Applied ("pair", [ key; value ])
+let set : L.type_ref = L.Applied ("set", [ key ])
+let bits : L.type_ref = L.Name "bits"
 let left : L.type_ref = L.TypeParameter "X"
 let right : L.type_ref = L.TypeParameter "Y"
 
@@ -50,8 +54,16 @@ let signature (name : string) (type_parameters : string list) :
         (L.TupleType [ list left; list left ])
   | "max_nat" | "min_nat" -> expect [] [ list nat ] nat
   | "strip_prefix" | "strip_suffix" -> expect [] [ text; text ] text
+  | "split_text" -> expect [] [ text; text ] (list text)
+  | "sub_set" | "eq_set" -> expect [ "K" ] [ set; set ] bool
   | "shl" | "shr" | "int_to_bitstr" | "bitstr_to_int" -> expect [] [ int; int ] int
   | "shr_arith" -> expect [] [ int; int; int ] int
+  | "bits_to_int_signed" -> expect [] [ bits ] int
+  | "int_to_bits_unsigned" | "int_to_bits_signed" ->
+      expect [] [ nat; int ] bits
+  | "bitacc" -> expect [] [ int; int; int ] int
+  | "bitacc_replace" -> expect [] [ int; int; int; int ] int
+  | "text_to_int" -> expect [] [ text ] int
   | "print_" -> expect [ "X" ] [ left ] text
   | _ -> Error (name ^ " because no relation builtin implementation is known")
 
@@ -85,6 +97,12 @@ let relation ?(print_parameters = []) (name : string)
   L.Relation
     { name = "$" ^ name; type_parameters; equality_parameters = [];
       print_parameters; argument_types; rules; notation = None }
+
+let builtin (name : string) (parameters : L.type_ref list)
+    (result : L.type_ref) (body : string) : L.declaration =
+  L.Builtin
+    { name = "$" ^ name; type_parameters = []; equality_parameters = [];
+      print_parameters = []; parameters; result; body }
 
 (* First pair with key k: a later pair is reached only past pairs with other
    keys, as in Maps.map_find_opt and Lists.assoc_. *)
@@ -219,6 +237,32 @@ let distinct (relation_types : L.type_ref list) : L.declaration list =
           [ L.Prop (L.Iff (L.IsTrue result, L.Predicate (native "List.Nodup" [ elements ]))) ]
           [ elements; result ] ] ]
 
+let set_comparison (name : string) (relation_types : L.type_ref list)
+    (constructor : constructor_lookup) : L.declaration list =
+  let elements_left : L.term = variable "xs" (list key) in
+  let elements_right : L.term = variable "ys" (list key) in
+  let result : L.term = variable "b" bool in
+  let set_of (elements : L.term) : L.term =
+    L.Constructor (constructor "set" [ key ] [ "`{"; "%"; "`}" ], [ elements ])
+  in
+  let included (source : L.term) (target : L.term) : L.prop =
+    let element : L.term = variable "x" key in
+    L.Forall
+      ( "x", key,
+        L.Implies
+          (L.Membership (element, source), L.Membership (element, target)) )
+  in
+  let condition : L.prop =
+    let forward : L.prop = included elements_left elements_right in
+    if name = "sub_set" then forward
+    else L.And (forward, included elements_right elements_left)
+  in
+  [ relation name [ "K" ] relation_types
+      [ rule name [ key ] "compare"
+          [ ("xs", list key); ("ys", list key); ("b", bool) ]
+          [ L.Prop (L.Iff (L.IsTrue result, condition)) ]
+          [ set_of elements_left; set_of elements_right; result ] ] ]
+
 (* The runtime also fails for n >= 2^62 when converting n to a machine int;
    that interpreter limit is not modeled. *)
 let partition (relation_types : L.type_ref list) : L.declaration list =
@@ -253,6 +297,22 @@ let strip (name : string) (relation_types : L.type_ref list) : L.declaration lis
   [ relation name [] relation_types
       [ rule name [] "strip" [ ("t", text); (affix_name, text); ("r", text) ]
           [ comparison L.Eq whole joined ] [ whole; affix; result ] ] ]
+
+(* A one-byte UTF-8 separator is ASCII, so String.splitOn agrees with
+   String.split_on_char and preserves empty fields. *)
+let split_text (relation_types : L.type_ref list) : L.declaration list =
+  let whole : L.term = variable "t" text in
+  let separator : L.term = variable "separator" text in
+  let result : L.term = variable "parts" (list text) in
+  let split : L.term = native "String.splitOn" [ whole; separator ] in
+  [ relation "split_text" [] relation_types
+      [ rule "split_text" [] "split"
+          [ ("t", text); ("separator", text); ("parts", list text) ]
+          [ comparison L.Eq
+              (native "String.utf8ByteSize" [ separator ])
+              (number "1" nat);
+            comparison L.Eq result split ]
+          [ whole; separator; result ] ] ]
 
 let bit_width_limit : L.term = number "2048" int
 
@@ -310,6 +370,151 @@ let bitstr_to_int (relation_types : L.type_ref list) : L.declaration list =
           [ comparison L.Lt (number "0" int) width; comparison L.Le width bit_width_limit ]
           [ width; n; centered ] ] ]
 
+let bits_to_int_signed (relation_types : L.type_ref list) : L.declaration list =
+  let helper : string = "bits_to_int_signed:convert" in
+  let head : L.term = variable "sign" bool in
+  let tail : L.term = variable "tail" (list bool) in
+  let result : L.term = variable "result" int in
+  let input : L.term = cons head tail in
+  let converted : L.term = L.Apply (application helper [] [ input ]) in
+  [ builtin helper [ bits ] int
+      "match arg0 with | [] => 0 | sign :: _ => let unsigned := arg0.foldl \
+       (fun value bit => 2 * value + (if bit then 1 else 0)) (0 : Int); if \
+       sign then unsigned - (2 : Int) ^ arg0.length else unsigned";
+    relation "bits_to_int_signed" [] relation_types
+      [ rule "bits_to_int_signed" [] "nonempty"
+          [ ("sign", bool); ("tail", list bool); ("result", int) ]
+          [ comparison L.Eq converted result ] [ input; result ] ] ]
+
+(* Int.shiftRight exposes the same infinite two's-complement low bits as
+   Bigint.land; the width guard also makes Bigint.to_int_exn total. *)
+let int_to_bits (name : string) (relation_types : L.type_ref list) :
+    L.declaration list =
+  let width : L.term = variable "width" nat in
+  let value : L.term = variable "value" int in
+  let result : L.term = variable "result" bits in
+  let index : L.term = variable "index" nat in
+  let indices : L.term =
+    native "List.reverse" [ native "List.range" [ width ] ]
+  in
+  let shifted : L.term = native "Int.shiftRight" [ value; index ] in
+  let bit : L.term =
+    L.Decide
+      ([], L.Comparison (L.Eq,
+              native "Int.emod" [ shifted; number "2" int ],
+              number "1" int))
+  in
+  let converted : L.term =
+    native "List.map" [ L.Lambda ("index", nat, bit); indices ]
+  in
+  [ relation name [] relation_types
+      [ rule name [] "convert"
+          [ ("width", nat); ("value", int); ("result", bits) ]
+          [ comparison L.Le width (number "2048" nat);
+            comparison L.Eq result converted ]
+          [ width; value; result ] ] ]
+
+(* Bigint.to_int_exn accepts exactly OCaml's nonnegative 63-bit int range. *)
+let machine_int_max : L.term = number "4611686018427387903" int
+
+let bitacc (relation_types : L.type_ref list) : L.declaration list =
+  let helper : string = "bitacc:band" in
+  let base : L.term = variable "base" int in
+  let high : L.term = variable "high" int in
+  let low : L.term = variable "low" int in
+  let result : L.term = variable "result" int in
+  let slice_width : L.term =
+    L.Binary ("-", L.Binary ("+", high, number "1" int), low)
+  in
+  let shifted : L.term =
+    native "Int.shiftRight" [ base; native "Int.toNat" [ low ] ]
+  in
+  let mask : L.term = L.Binary ("-", power slice_width, number "1" int) in
+  let sliced : L.term = L.Apply (application helper [] [ shifted; mask ]) in
+  [ builtin helper [ int; int ] int Builtin.band_body;
+    relation "bitacc" [] relation_types
+      [ rule "bitacc" [] "slice"
+          [ ("base", int); ("high", int); ("low", int); ("result", int) ]
+          [ comparison L.Le (number "0" int) low;
+            comparison L.Le low machine_int_max;
+            comparison L.Eq result sliced ]
+          [ base; high; low; result ] ] ]
+
+let bitacc_replace (relation_types : L.type_ref list) : L.declaration list =
+  let band_helper : string = "bitacc_replace:band" in
+  let xor_helper : string = "bitacc_replace:bxor" in
+  let base : L.term = variable "base" int in
+  let high : L.term = variable "high" int in
+  let low : L.term = variable "low" int in
+  let replacement : L.term = variable "replacement" int in
+  let result : L.term = variable "result" int in
+  let shifted_replacement : L.term =
+    native "Int.shiftLeft" [ replacement; native "Int.toNat" [ low ] ]
+  in
+  let mask_high : L.term =
+    L.Binary
+      ("-", power (L.Binary ("+", high, number "1" int)), number "1" int)
+  in
+  let mask_low : L.term =
+    L.Binary ("-", power low, number "1" int)
+  in
+  let mask_xor : L.term =
+    L.Apply (application xor_helper [] [ mask_high; mask_low ])
+  in
+  let mask : L.term =
+    L.Binary ("-", L.Unary ("-", mask_xor), number "1" int)
+  in
+  let preserved : L.term =
+    L.Apply (application band_helper [] [ base; mask ])
+  in
+  let replaced : L.term =
+    L.Apply
+      (application xor_helper [] [ preserved; shifted_replacement ])
+  in
+  [ builtin band_helper [ int; int ] int Builtin.band_body;
+    builtin xor_helper [ int; int ] int Builtin.bxor_body;
+    relation "bitacc_replace" [] relation_types
+      [ rule "bitacc_replace" [] "replace"
+          [ ("base", int); ("high", int); ("low", int);
+            ("replacement", int); ("result", int) ]
+          [ comparison L.Le (number "0" int) low;
+            comparison L.Le low machine_int_max;
+            comparison L.Eq result replaced ]
+          [ base; high; low; replacement; result ] ] ]
+
+let text_to_int_parser : string =
+  "let digit? (base : Nat) (c : Char) : Option Nat := \
+   let code := c.toNat; \
+   let value? := if '0'.toNat ≤ code ∧ code ≤ '9'.toNat then \
+     some (code - '0'.toNat) else if 'a'.toNat ≤ code ∧ code ≤ 'f'.toNat \
+     then some (code - 'a'.toNat + 10) else if 'A'.toNat ≤ code ∧ code ≤ \
+     'F'.toNat then some (code - 'A'.toNat + 10) else none; \
+   value?.bind (fun value => if value < base then some value else none); \
+   let rec digits (base accumulator : Nat) (chars : List Char) : Option Nat := \
+     match chars with | [] => some accumulator | '_' :: tail => digits base \
+     accumulator tail | c :: tail => match digit? base c with | none => none | \
+     some digit => digits base (accumulator * base + digit) tail; \
+   let (negative, chars) := match arg0.toList with | '-' :: '+' :: tail => \
+     (true, tail) | '-' :: tail => (true, tail) | '+' :: tail => (false, tail) \
+     | chars => (false, chars); \
+   let (base, chars) := match chars with | '0' :: 'x' :: tail | '0' :: 'X' \
+     :: tail => (16, tail) | '0' :: 'o' :: tail | '0' :: 'O' :: tail => (8, \
+     tail) | '0' :: 'b' :: tail | '0' :: 'B' :: tail => (2, tail) | chars \
+     => (10, chars); \
+   match chars with | '_' :: _ => none | _ => (digits base 0 chars).map \
+     (fun value => if negative then -(Int.ofNat value) else Int.ofNat value)"
+
+let text_to_int (relation_types : L.type_ref list) : L.declaration list =
+  let helper : string = "text_to_int:parse" in
+  let input : L.term = variable "input" text in
+  let result : L.term = variable "result" int in
+  let parsed : L.term = L.Apply (application helper [] [ input ]) in
+  [ builtin helper [ text ] (option int) text_to_int_parser;
+    relation "text_to_int" [] relation_types
+      [ rule "text_to_int" [] "success"
+          [ ("input", text); ("result", int) ]
+          [ comparison L.Eq parsed (some result) ] [ input; result ] ] ]
+
 (* P4.Unparse.pp_value returns text exactly when SpecTecPrint returns some text. *)
 let print (relation_types : L.type_ref list) : L.declaration list =
   let value : L.term = variable "value" left in
@@ -335,12 +540,20 @@ let translate (name : string) (type_parameters : string list)
       | "adds_map" -> Ok (adds_map types)
       | "assoc_" -> Ok (assoc types)
       | "distinct_" -> Ok (distinct types)
+      | "sub_set" | "eq_set" -> Ok (set_comparison name types constructor)
       | "partition_" -> Ok (partition types)
       | "max_nat" -> Ok (extremum name types "Nat.max")
       | "min_nat" -> Ok (extremum name types "Nat.min")
       | "strip_prefix" | "strip_suffix" -> Ok (strip name types)
+      | "split_text" -> Ok (split_text types)
       | "shl" | "shr" | "shr_arith" -> Ok (shift name types)
       | "int_to_bitstr" -> Ok (int_to_bitstr types)
       | "bitstr_to_int" -> Ok (bitstr_to_int types)
+      | "bits_to_int_signed" -> Ok (bits_to_int_signed types)
+      | "int_to_bits_unsigned" | "int_to_bits_signed" ->
+          Ok (int_to_bits name types)
+      | "bitacc" -> Ok (bitacc types)
+      | "bitacc_replace" -> Ok (bitacc_replace types)
+      | "text_to_int" -> Ok (text_to_int types)
       | "print_" -> Ok (print types)
       | _ -> Error (name ^ " because no relation builtin implementation is known"))
