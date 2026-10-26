@@ -1,0 +1,25 @@
+
+(rule
+ (target ordered-fresh-runtime.lean)
+ (deps ../../lib/lean-skeleton/lean/SpecTecExecution.lean ordered-fresh-runtime-proof.lean)
+ (action
+  (with-stdout-to ordered-fresh-runtime.lean
+   (progn (cat %{dep:../../lib/lean-skeleton/lean/SpecTecExecution.lean})
+          (cat %{dep:ordered-fresh-runtime-proof.lean})))))
+
+(rule
+ (alias backend-lean)
+ (deps ordered-fresh-runtime.lean)
+ (action (run lean ordered-fresh-runtime.lean)))
+
+(rule
+ (target ordered-runtime.lean)
+ (deps ../../lib/lean-skeleton/lean/SpecTecExecution.lean ordered-runtime-proof.lean)
+ (action (with-stdout-to %{target}
+   (progn (cat %{dep:../../lib/lean-skeleton/lean/SpecTecExecution.lean})
+          (cat %{dep:ordered-runtime-proof.lean})))))
+
+(rule
+ (alias backend-lean)
+ (deps ordered-runtime.lean)
+ (action (run lean ordered-runtime.lean)))
