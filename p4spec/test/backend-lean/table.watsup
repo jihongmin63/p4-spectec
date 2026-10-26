@@ -1,0 +1,57 @@
+syntax small = S1 | S2 nat
+
+syntax ty = A | B | small | WRAP text ty | LIST ty*
+
+syntax color = RED | GREEN | BLUE
+
+var b : bool
+var n : nat
+
+dec $forall_(bool*) : bool
+def $forall_(eps) = true
+def $forall_(b_h :: b_t*) = b_h /\ $forall_(b_t*)
+
+;; subtype row, recursion, recursion through a list, catch-all row
+tbl dec $is_small(ty) : bool
+tbl def $is_small =
+  | small => true
+  | WRAP _ ty => $is_small(ty)
+  | LIST ty* => $forall_($is_small(ty)*)
+  | _ => false
+
+;; overlapping rows: (WRAP, WRAP) must take the earlier row
+tbl dec $compat(ty, ty) : bool
+tbl def $compat =
+  | (A, A) => true
+  | (S2 n_l, S2 n_r) => $(n_l = n_r)
+  | (WRAP _ ty_l, ty_r) => $compat(ty_l, ty_r)
+  | (ty_l, WRAP _ ty_r) => $compat(ty_l, ty_r)
+  | (_, _) => false
+
+;; exhaustive rows without a catch-all row: no fallback arm
+tbl dec $is_warm(color) : bool
+tbl def $is_warm =
+  | RED => true
+  | GREEN => false
+  | BLUE => false
+
+;; non-exhaustive rows: fallback arm, no derivation for GREEN/BLUE
+tbl dec $is_red(color) : bool
+tbl def $is_red =
+  | RED => true
+
+;; parameterless table without rows: the fallback selector is a constant
+tbl dec $never : bool
+
+;; callers: premise and function argument
+relation Small_ok: |- ty
+  hint(input %0)
+rule Small_ok/table:
+  |- ty
+  -- if $is_small(ty)
+
+dec $apply_check(def $check(ty) : bool, ty) : bool
+def $apply_check(def $check, ty) = $check(ty)
+
+dec $wrapped_small(ty) : bool
+def $wrapped_small(ty) = $apply_check(def $is_small, WRAP "w" ty)

@@ -5,7 +5,8 @@ module StringSet = Set.Make (String)
 let defined_name (declaration : L.declaration) : string =
   match declaration with
   | Datatype { name; _ } | TypeAlias { name; _ } | Structure { name; _ }
-  | Relation { name; _ } | Builtin { name; _ } | Coercion { name; _ }
+  | Relation { name; _ } | Builtin { name; _ } | Selector { name; _ }
+  | Coercion { name; _ }
   | Membership { name; _ } -> name
 
 let unions (sets : StringSet.t list) : StringSet.t =
@@ -89,6 +90,8 @@ let references (declaration : L.declaration) : StringSet.t =
         (List.map type_references argument_types @ List.map rule_references rules)
   | Builtin { parameters; result; _ } ->
       unions (List.map type_references (result :: parameters))
+  | Selector { parameters; _ } ->
+      unions (List.map type_references parameters)
   | Coercion { source; target; _ } ->
       StringSet.union (type_references source) (type_references target)
   | Membership { source; _ } -> type_references source
@@ -304,6 +307,25 @@ let expand_declaration (lookup : string -> L.type_alias option)
                   premises = List.map (Traversal.map_premise_types expand) rule.premises;
                   conclusion = Traversal.map_application_types expand rule.conclusion })
               relation.rules }
+  | Selector selector ->
+      L.Selector
+        { selector with
+          parameters = List.map expand selector.parameters;
+          arms =
+            List.map
+              (fun (patterns, row) ->
+                ( List.map
+                    (function
+                      | L.Wildcard -> L.Wildcard
+                      | L.ConstructorPattern (reference, arity) ->
+                          L.ConstructorPattern
+                            ( { reference with
+                                type_arguments =
+                                  List.map expand reference.type_arguments },
+                              arity ))
+                    patterns,
+                  row ))
+              selector.arms }
   | TypeAlias _ | Builtin _ | Coercion _ | Membership _ -> source.declaration
 
 let expand_print_instance_arguments (graph : graph)
@@ -752,6 +774,8 @@ let group_program (graph : graph) (print_names : StringSet.t)
             | Structure _ -> [], Data
             | Relation { type_parameters; _ } -> type_parameters, Proposition
             | Builtin _ -> Translator.unsupported at "mutual builtin definitions"
+            | Selector _ ->
+                Translator.unsupported at "mutual selector definitions"
             | Coercion _ -> Translator.unsupported at "mutual coercion definitions"
             | Membership _ -> Translator.unsupported at "mutual membership definitions"
             | TypeAlias _ ->

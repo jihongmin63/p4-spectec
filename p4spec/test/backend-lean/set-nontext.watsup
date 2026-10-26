@@ -1,0 +1,9 @@
+syntax set<K> = `{ K* `}
+
+builtin dec $union_set<K>(set<K>, set<K>) : set<K>
+
+var A : set<nat>
+var B : set<nat>
+
+dec $bad_union(set<nat>, set<nat>) : set<nat>
+def $bad_union(A, B) = $union_set<nat>(A, B)
