@@ -82,8 +82,8 @@ module Lean = struct
   type premise =
     | Holds of application
     | NotHolds of application * Util.Source.region
-    | NotExists of (string * type_ref) list * application * Util.Source.region
     | Prop of prop
+    | RuntimeCheck of prop * string
 
   type notation_part = Hole | Literal of string
 
@@ -136,6 +136,7 @@ module Lean = struct
 
   type declaration =
     | Datatype of datatype
+    | ExternType of string
     | TypeAlias of type_alias
     | Structure of { name : string; fields : (string * type_ref) list }
     | Relation of {

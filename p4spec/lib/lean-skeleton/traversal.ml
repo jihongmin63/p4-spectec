@@ -60,10 +60,8 @@ let map_premise_types (map : L.type_ref -> L.type_ref) (premise : L.premise) :
   match premise with
   | Holds application -> L.Holds (map_application_types map application)
   | NotHolds (application, at) -> L.NotHolds (map_application_types map application, at)
-  | NotExists (binders, application, at) ->
-      L.NotExists (List.map (fun (name, typ) -> name, map typ) binders,
-        map_application_types map application, at)
   | Prop prop -> L.Prop (map_prop_types map prop)
+  | RuntimeCheck (prop, message) -> L.RuntimeCheck (map_prop_types map prop, message)
 
 let rec prop_terms (prop : L.prop) : L.term list =
   match prop with
@@ -90,9 +88,8 @@ let term_children (term : L.term) : L.term list =
 
 let premise_terms (premise : L.premise) : L.term list =
   match premise with
-  | Holds application | NotHolds (application, _)
-  | NotExists (_, application, _) -> application.arguments
-  | Prop prop -> prop_terms prop
+  | Holds application | NotHolds (application, _) -> application.arguments
+  | Prop prop | RuntimeCheck (prop, _) -> prop_terms prop
 
 let rec term_applications (term : L.term) : L.application list =
   let nested : L.application list =
@@ -103,9 +100,8 @@ let rec term_applications (term : L.term) : L.application list =
 let premise_applications (premise : L.premise) : L.application list =
   let direct : L.application list =
     match premise with
-    | L.Holds application | L.NotHolds (application, _)
-    | L.NotExists (_, application, _) -> [ application ]
-    | L.Prop _ -> []
+    | L.Holds application | L.NotHolds (application, _) -> [ application ]
+    | L.Prop _ | L.RuntimeCheck _ -> []
   in
   direct @ List.concat_map term_applications (premise_terms premise)
 
@@ -173,6 +169,5 @@ let map_premise_applications (map : L.application -> L.application)
   match premise with
   | Holds value -> L.Holds (application value)
   | NotHolds (value, at) -> L.NotHolds (application value, at)
-  | NotExists (binders, value, at) ->
-      L.NotExists (binders, application value, at)
   | Prop prop -> L.Prop (map_prop_applications map prop)
+  | RuntimeCheck (prop, message) -> L.RuntimeCheck (map_prop_applications map prop, message)

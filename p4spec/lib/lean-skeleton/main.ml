@@ -2,6 +2,9 @@ let ( let* ) = Result.bind
 
 let () =
   let arguments : string list = Array.to_list Sys.argv |> List.tl in
+  let arguments = match arguments with
+    | "--relation-semantics" :: "declarative" :: rest -> rest
+    | args -> args in
   let keep_going : bool = List.mem "--keep-going" arguments in
   (match List.find_opt
       (fun argument ->

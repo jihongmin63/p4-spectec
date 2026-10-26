@@ -4,7 +4,7 @@ module StringSet = Set.Make (String)
 
 let defined_name (declaration : L.declaration) : string =
   match declaration with
-  | Datatype { name; _ } | TypeAlias { name; _ } | Structure { name; _ }
+  | Datatype { name; _ } | ExternType name | TypeAlias { name; _ } | Structure { name; _ }
   | Relation { name; _ } | Builtin { name; _ } | Selector { name; _ }
   | Coercion { name; _ }
   | Membership { name; _ } -> name
@@ -46,7 +46,9 @@ let rec term_references (term : L.term) : StringSet.t =
     | Lambda (_, typ, _) -> type_references typ
     | Projection (name, _, _) -> StringSet.singleton name
     | Decide (types, _) -> unions (List.map type_references types)
-    | Boolean _ | Text _ | Native _ | Unary _ | Binary _ | Tuple _
+    | Native (predicate, _) ->
+        StringSet.of_list (Extern_model.predicate_dependencies predicate)
+    | Boolean _ | Text _ | Unary _ | Binary _ | Tuple _
     | ListLiteral _ | Index _ -> StringSet.empty
   in
   StringSet.union own (unions (List.map term_references (Traversal.term_children term)))
@@ -61,10 +63,7 @@ let application_references (application : L.application) : StringSet.t =
 let premise_references (premise : L.premise) : StringSet.t =
   match premise with
   | Holds application | NotHolds (application, _) -> application_references application
-  | NotExists (binders, application, _) ->
-      StringSet.union (application_references application)
-        (unions (List.map (fun (_, typ) -> type_references typ) binders))
-  | Prop prop -> unions (List.map term_references (Traversal.prop_terms prop))
+  | Prop prop | RuntimeCheck (prop, _) -> unions (List.map term_references (Traversal.prop_terms prop))
 
 let rule_references (rule : L.rule) : StringSet.t =
   unions
@@ -74,6 +73,7 @@ let rule_references (rule : L.rule) : StringSet.t =
 
 let references (declaration : L.declaration) : StringSet.t =
   match declaration with
+  | ExternType _ -> StringSet.empty
   | Datatype { constructors; _ } ->
       unions
         (List.map
@@ -326,7 +326,7 @@ let expand_declaration (lookup : string -> L.type_alias option)
                     patterns,
                   row ))
               selector.arms }
-  | TypeAlias _ | Builtin _ | Coercion _ | Membership _ -> source.declaration
+  | ExternType _ | TypeAlias _ | Builtin _ | Coercion _ | Membership _ -> source.declaration
 
 let expand_print_instance_arguments (graph : graph)
     (source : L.located_declaration) : L.located_declaration =
@@ -402,13 +402,7 @@ let validate_negative_premises (names : string list)
                     ("IfNotHoldPr of same-SCC relation " ^ name)
             | L.NotHolds ({ target = Local name; _ }, at) ->
                 Translator.unsupported at ("IfNotHoldPr of local relation " ^ name)
-            | L.NotExists (_, { target = Global name; _ }, at) ->
-                let definition : string = defined_name source.declaration in
-                if List.mem name names then
-                  Translator.unsupported at ("otherwise of recursive definition " ^ definition)
-            | L.NotExists (_, { target = Local name; _ }, at) ->
-                Translator.unsupported at ("otherwise of local relation " ^ name)
-            | L.Holds _ | L.Prop _ -> ())
+            | L.Holds _ | L.Prop _ | L.RuntimeCheck _ -> ())
           rule.premises)
         rules
   | _ -> ()
@@ -734,6 +728,34 @@ let group_program (graph : graph) (print_names : StringSet.t)
   let sources : L.located_declaration list =
     List.map (fun name -> (StringMap.find name graph).source) names
   in
+  List.iter (fun (source : L.located_declaration) ->
+    (match source.declaration with
+    | L.Relation { name = ("$init_archState" | "$init_objectState") as name;
+                   argument_types; rules; _ } ->
+        List.iter (fun (rule : L.rule) -> List.iter (function
+          | L.Prop (L.Predicate (L.Native (predicate, _))) ->
+              List.iter (fun typ ->
+                match StringMap.find_opt typ graph with
+                | Some { source = { declaration = L.ExternType _; _ }; _ }
+                  when (match List.rev argument_types with
+                        | result :: _ -> result = L.Name typ
+                        | [] -> false) -> ()
+                | _ -> Translator.unsupported source.at
+                    ("external function " ^ name ^ " requires extern result type " ^ typ))
+                (Extern_model.predicate_dependencies predicate)
+          | _ -> ()) rule.premises) rules
+    | _ -> ());
+    if Extern_model.uses_p4_model source.declaration then (
+      let lookup name = Option.map (fun node -> node.source.declaration)
+        (StringMap.find_opt name graph) in
+      (match Extern_model.validate_p4_model lookup with
+      | Some reason -> Translator.unsupported source.at ("P4 extern model: " ^ reason)
+      | None -> ());
+      match source.declaration with
+      | L.Relation { name; argument_types; _ }
+        when Extern_model.expected_p4_arguments name <> Some argument_types ->
+          Translator.unsupported source.at ("P4 extern model signature of " ^ name)
+      | _ -> ())) sources;
   List.iter (validate_negative_premises names) sources;
   List.iter (validate_relation_values names) sources;
   let (aliases, inductives) :
@@ -773,6 +795,7 @@ let group_program (graph : graph) (print_names : StringSet.t)
             | Datatype { type_parameters; _ } -> type_parameters, Data
             | Structure _ -> [], Data
             | Relation { type_parameters; _ } -> type_parameters, Proposition
+            | ExternType _ -> Translator.unsupported at "mutual external type definitions"
             | Builtin _ -> Translator.unsupported at "mutual builtin definitions"
             | Selector _ ->
                 Translator.unsupported at "mutual selector definitions"

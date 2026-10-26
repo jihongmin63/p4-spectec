@@ -1,5 +1,8 @@
 module L = Ast.Lean
 
+let extern_types_active = ref false
+let call_type_parameters = ref Order.StringMap.empty
+
 let print_identifier (name : string) : string = Identifier.print_identifier name
 
 let print_global_name (bound : string list) (name : string) : string =
@@ -221,10 +224,18 @@ let rec print_term (bound : string list) (term : L.term) : string =
   match term with
   | Variable (name, _) -> print_identifier name
   | Constructor (reference, arguments) ->
-      "(" ^ String.concat " "
-        (("@" ^ print_constructor_ref bound reference)
-        :: (List.map (print_type bound) reference.type_arguments
-           @ List.map print arguments)) ^ ")"
+      if !extern_types_active then
+        let result_type = match reference.type_arguments with
+          | [] -> L.Name reference.type_name
+          | arguments -> L.Applied (reference.type_name, arguments) in
+        "((" ^ String.concat " "
+          (print_constructor_ref bound reference :: List.map print arguments)
+        ^ ") : " ^ print_type bound result_type ^ ")"
+      else
+        "(" ^ String.concat " "
+          (("@" ^ print_constructor_ref bound reference)
+          :: (List.map (print_type bound) reference.type_arguments
+             @ List.map print arguments)) ^ ")"
   | Boolean value -> string_of_bool value
   | Number (value, typ) -> "(" ^ value ^ " : " ^ print_type bound typ ^ ")"
   | Text value -> "\"" ^ escape_string value ^ "\""
@@ -285,14 +296,29 @@ and print_connective (bound : string list) (operator : string)
 
 and print_application (bound : string list) (application : L.application) : string =
   let name : string = print_reference bound application.target in
-  let name : string =
-    match application.type_arguments with [] -> name | _ -> "@" ^ name
+  let named_parameters = match application.target with
+    | L.Global name when !extern_types_active ->
+        Order.StringMap.find_opt name !call_type_parameters
+    | _ -> None
   in
-  let arguments : string list =
-    List.map (print_type bound) application.type_arguments
-    @ List.map (fun _ -> "_") application.instance_arguments
-    @ List.map (print_instance bound) application.print_instance_arguments
-    @ List.map (print_term bound) application.arguments
+  let name, implicit_arguments = match named_parameters with
+    | Some parameters when List.length parameters = List.length application.type_arguments ->
+        (* Named arguments work both before and after Lean generalizes section
+           instances, including self references inside inductive definitions. *)
+        name,
+        List.map2 (fun parameter typ ->
+          "(" ^ print_identifier parameter ^ " := " ^ print_type bound typ ^ ")")
+          parameters application.type_arguments
+        @ List.mapi (fun index typ ->
+            "(specTecPrint_" ^ string_of_int index ^ " := "
+            ^ print_instance bound typ ^ ")") application.print_instance_arguments
+    | _ ->
+        (if application.type_arguments = [] then name else "@" ^ name),
+        List.map (print_type bound) application.type_arguments
+        @ List.map (fun _ -> "_") application.instance_arguments
+        @ List.map (print_instance bound) application.print_instance_arguments
+  in
+  let arguments = implicit_arguments @ List.map (print_term bound) application.arguments
   in
   match arguments with
   | [] -> name
@@ -302,16 +328,7 @@ let print_premise (bound : string list) (premise : L.premise) : string =
   match premise with
   | Holds application -> print_application bound application
   | NotHolds (application, _) -> "(¬ " ^ print_application bound application ^ ")"
-  | NotExists (binders, application, _) ->
-      let bound : string list = bound @ List.map fst binders in
-      let body : string = print_application bound application in
-      let quantified : string = List.fold_right
-        (fun (name, typ) body ->
-          "∃ (" ^ print_identifier name ^ " : " ^ print_type bound typ ^ "), " ^ body)
-        binders body
-      in
-      "(¬ " ^ quantified ^ ")"
-  | Prop prop -> print_prop bound prop
+  | Prop prop | RuntimeCheck (prop, _) -> print_prop bound prop
 
 let print_constructor (type_parameters : string list) (constructor : L.constructor) :
     string =
@@ -352,8 +369,9 @@ let print_builtin (builtin : L.builtin) : string =
       builtin.equality_parameters
   in
   let print_parameters : string list =
-    List.map
-      (fun name -> "[_root_.SpecTecPrint " ^ print_identifier name ^ "]")
+    List.mapi
+      (fun index name -> "[specTecPrint_" ^ string_of_int index
+        ^ " : _root_.SpecTecPrint " ^ print_identifier name ^ "]")
       builtin.print_parameters
   in
   let parameters : string list =
@@ -532,6 +550,9 @@ let print_declaration ?(derive_decidable_eq = false)
     else printed
   in
   match declaration with
+  | ExternType name ->
+      Printf.sprintf "abbrev %s : Type := _root_.SpecTecExternTypes.%s"
+        (print_identifier name) (print_identifier name)
   | Datatype { name; type_parameters; constructors } ->
       deriving
         (String.concat "\n"
@@ -570,9 +591,10 @@ let print_declaration ?(derive_decidable_eq = false)
           @ List.map
               (fun name -> " [_root_.DecidableEq " ^ print_identifier name ^ "]")
               equality_parameters
-          @ List.map
-              (fun name ->
-                " [_root_.SpecTecPrint " ^ print_identifier name ^ "]")
+          @ List.mapi
+              (fun index name ->
+                " [specTecPrint_" ^ string_of_int index
+                ^ " : _root_.SpecTecPrint " ^ print_identifier name ^ "]")
               print_parameters)
       in
       let declaration : string =
@@ -1015,8 +1037,54 @@ let rec print_group (group : L.declaration_group) : string =
   | ManualDecidableEq equality -> print_manual_equality equality
   | ManualPrinter printer -> print_manual_printer printer
 
-let print (program : L.program) : string =
-  "set_option autoImplicit false\nset_option linter.unusedVariables false\n\n"
-  ^ print_prelude ^ "\n\nnamespace SpecTec\n\n"
-  ^ String.concat "\n\n" (List.map print_group program)
+let rec declarations_in_group (group : L.declaration_group) : L.declaration list =
+  match group with
+  | L.Single declaration -> [ declaration ]
+  | L.Mutual declarations -> declarations
+  | L.DerivingDecidableEq group -> declarations_in_group group
+  | L.ManualDecidableEq _ | L.ManualPrinter _ -> []
+
+let append_obligations (semantics : string) (obligations : string) : string =
+  if obligations = "" then semantics
+  else
+    let context = String.split_on_char '\n' semantics
+      |> List.filter (String.starts_with ~prefix:"variable [")
+      |> String.concat "\n" in
+    let obligations = String.split_on_char '\n' obligations
+      |> List.map (fun line ->
+           if line = "namespace SpecTec" then line ^ "\n" ^ context else line)
+      |> String.concat "\n" in
+    semantics ^ "\n\n" ^ obligations
+
+let configure declarations =
+  let extern_types = List.exists (function L.ExternType _ -> true | _ -> false) declarations in
+  extern_types_active := extern_types;
+  call_type_parameters := List.fold_left (fun signatures -> function
+    | L.Relation { name; type_parameters; _ }
+    | L.Builtin { name; type_parameters; _ } ->
+        Order.StringMap.add name type_parameters signatures
+    | _ -> signatures) Order.StringMap.empty declarations
+
+let print ?(ordered_externs = false) (program : L.program) : string =
+  let declarations = List.concat_map declarations_in_group program in
+  let extern_types = List.exists (function L.ExternType _ -> true | _ -> false) declarations in
+  let p4_externs = List.exists Extern_model.uses_p4_model declarations in
+  configure declarations;
+  let data, relations = List.partition (fun group ->
+    not (List.exists (function L.Relation _ -> true | _ -> false)
+      (declarations_in_group group))) program in
+  let groups = List.map print_group data
+    @ (if p4_externs then [Extern_model.p4_source] else [])
+    @ List.map print_group relations in
+  let groups = List.mapi (fun index contents ->
+    let number = string_of_int index in
+    "-- SpecTecModule:decl:begin:" ^ number ^ "\n" ^ contents
+    ^ "\n-- SpecTecModule:decl:end:" ^ number) groups in
+  "set_option autoImplicit false\nset_option linter.unusedVariables false\n"
+  ^ (if extern_types then "set_option linter.unusedSectionVars false\n" else "")
+  ^ "\n" ^ print_prelude ^ "\n\n"
+  ^ (if extern_types then Extern_model.types_source ~ordered:ordered_externs ^ "\n\n" else "")
+  ^ "namespace SpecTec\n\n"
+  ^ (if extern_types then "variable [SpecTecExternTypes]\n\n" else "")
+  ^ String.concat "\n\n" groups
   ^ "\n\nend SpecTec"

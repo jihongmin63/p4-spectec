@@ -9,6 +9,32 @@
  (libraries builtin runtime util domain lang bignum.bigint))
 
 (rule
+ (target extern-direct.lean)
+ (deps extern-model.watsup extern-direct-proof.lean)
+ (action
+  (with-stdout-to extern-direct.lean
+   (progn
+    (run %{exe:../../lib/lean-skeleton/main.exe} --relation-semantics declarative %{dep:extern-model.watsup})
+    (cat %{dep:extern-direct-proof.lean})))))
+
+(rule
+ (alias backend-lean)
+ (deps extern-direct.lean)
+ (action (run lean extern-direct.lean)))
+
+(rule
+ (target extern-syntax-only.lean)
+ (deps extern-syntax-only.watsup)
+ (action
+  (with-stdout-to extern-syntax-only.lean
+   (run %{exe:../../lib/lean-skeleton/main.exe} --relation-semantics declarative %{dep:extern-syntax-only.watsup}))))
+
+(rule
+ (alias backend-lean)
+ (deps extern-syntax-only.lean)
+ (action (run lean extern-syntax-only.lean)))
+
+(rule
  (target builtin_oracle.actual)
  (action
   (with-stdout-to builtin_oracle.actual
@@ -26,7 +52,7 @@
  (action
   (with-stdout-to set.lean
    (progn
-    (run %{exe:../../lib/lean-skeleton/main.exe} %{dep:set.watsup})
+    (run %{exe:../../lib/lean-skeleton/main.exe} --relation-semantics declarative %{dep:set.watsup})
     (cat %{dep:set-proof.lean})))))
 
 (rule
@@ -41,7 +67,7 @@
   (with-stderr-to set-nontext.actual
    (with-accepted-exit-codes 1
     (run
-     %{exe:../../lib/lean-skeleton/main.exe}
+     %{exe:../../lib/lean-skeleton/main.exe} --relation-semantics declarative
      %{dep:set-nontext.watsup})))))
 
 (rule
@@ -56,7 +82,7 @@
  (action
   (with-stdout-to tuple.lean
    (progn
-    (run %{exe:../../lib/lean-skeleton/main.exe} %{dep:tuple.watsup})
+    (run %{exe:../../lib/lean-skeleton/main.exe} --relation-semantics declarative %{dep:tuple.watsup})
     (cat %{dep:tuple-proof.lean})))))
 
 (rule
@@ -70,7 +96,7 @@
  (action
   (with-stdout-to notation.lean
    (progn
-    (run %{exe:../../lib/lean-skeleton/main.exe} %{dep:notation.watsup})
+    (run %{exe:../../lib/lean-skeleton/main.exe} --relation-semantics declarative %{dep:notation.watsup})
     (cat %{dep:notation-proof.lean})))))
 
 (rule
@@ -84,7 +110,7 @@
  (action
   (with-stdout-to table.lean
    (progn
-    (run %{exe:../../lib/lean-skeleton/main.exe} %{dep:table.watsup})
+    (run %{exe:../../lib/lean-skeleton/main.exe} --relation-semantics declarative %{dep:table.watsup})
     (cat %{dep:table-proof.lean})))))
 
 (rule
@@ -98,7 +124,7 @@
  (action
   (with-stdout-to update.lean
    (progn
-    (run %{exe:../../lib/lean-skeleton/main.exe} %{dep:update.watsup})
+    (run %{exe:../../lib/lean-skeleton/main.exe} --relation-semantics declarative %{dep:update.watsup})
     (cat %{dep:update-proof.lean})))))
 
 (rule
@@ -112,7 +138,7 @@
  (action
   (with-stdout-to slice.lean
    (progn
-    (run %{exe:../../lib/lean-skeleton/main.exe} %{dep:slice.watsup})
+    (run %{exe:../../lib/lean-skeleton/main.exe} --relation-semantics declarative %{dep:slice.watsup})
     (cat %{dep:slice-proof.lean})))))
 
 (rule
@@ -126,7 +152,7 @@
  (action
   (with-stdout-to decidable-eq.lean
    (progn
-    (run %{exe:../../lib/lean-skeleton/main.exe} %{dep:decidable-eq.watsup})
+    (run %{exe:../../lib/lean-skeleton/main.exe} --relation-semantics declarative %{dep:decidable-eq.watsup})
     (cat %{dep:decidable-eq-proof.lean})))))
 
 (rule
@@ -140,7 +166,7 @@
  (action
   (with-stdout-to decidable-eq-shadow.lean
    (progn
-    (run %{exe:../../lib/lean-skeleton/main.exe} %{dep:decidable-eq-shadow.watsup})
+    (run %{exe:../../lib/lean-skeleton/main.exe} --relation-semantics declarative %{dep:decidable-eq-shadow.watsup})
     (cat %{dep:decidable-eq-shadow-proof.lean})))))
 
 (rule
@@ -155,7 +181,7 @@
   (with-stderr-to decidable-eq-unsupported.actual
    (with-accepted-exit-codes 1
     (run
-     %{exe:../../lib/lean-skeleton/main.exe}
+     %{exe:../../lib/lean-skeleton/main.exe} --relation-semantics declarative
      %{dep:decidable-eq-unsupported.watsup})))))
 
 (rule
@@ -172,7 +198,7 @@
  (action
   (with-stdout-to print.lean
    (progn
-    (run %{exe:../../lib/lean-skeleton/main.exe} %{dep:print.watsup})
+    (run %{exe:../../lib/lean-skeleton/main.exe} --relation-semantics declarative %{dep:print.watsup})
     (cat %{dep:print-proof.lean})))))
 
 (rule
@@ -199,8 +225,8 @@
  (action (with-stdout-to %{target}
    (progn (cat %{dep:../../lib/lean-skeleton/lean/SpecTecExecution.lean})
           (cat %{dep:ordered-runtime-proof.lean})))))
-
 (rule
  (alias backend-lean)
  (deps ordered-runtime.lean)
  (action (run lean ordered-runtime.lean)))
+

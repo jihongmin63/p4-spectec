@@ -80,9 +80,11 @@ type alias = { type_parameters : string list; body : S.typ }
 type structure_field = { atom : S.atom; name : string; typ : S.typ }
 
 type function_kind = RelationFunction | BuiltinFunction of string list
-  | BuiltinRelation of string list | UnsupportedFunction of string
+  | BuiltinRelation of string list
 
 type env = {
+  ordered : bool;
+  input_modes : (string, int list) Hashtbl.t;
   iteration_prefix : string;
   functions : function_kind StringMap.t;
   constructors : variant StringMap.t;
@@ -189,11 +191,13 @@ let build_env (program : S.spec) : env =
               (if Builtin_relation.is_relation id.it then BuiltinRelation names
                else BuiltinFunction names) env.functions }
       | ExternDecD (id, _, _, _, _) ->
-          { env with functions = StringMap.add id.it (UnsupportedFunction "external function") env.functions }
+          { env with functions = StringMap.add id.it RelationFunction env.functions }
       | TableDecD (id, _, _, _, _) ->
           { env with functions = StringMap.add id.it RelationFunction env.functions }
       | _ -> env)
     {
+      ordered = false;
+      input_modes = Hashtbl.create 32;
       iteration_prefix = "";
       functions = StringMap.empty;
       constructors = StringMap.empty;
@@ -518,8 +522,22 @@ let append_text (left : L.term) (right : L.term) : L.term =
 let utf8_byte_size (value : L.term) : L.term =
   L.Native ("String.utf8ByteSize", [ value ])
 
-let text_slice (result : terms_result) (typ : L.type_ref) (base : L.term)
+(* Source runtime errors stop clause selection. AL-inserted matching guards
+   remain ordinary Prop premises and can still produce unmatch. *)
+let operation_check ordered condition message : L.premise =
+  if ordered then L.RuntimeCheck (condition, message) else L.Prop condition
+
+let text_slice ?(ordered = false) (result : terms_result) (typ : L.type_ref) (base : L.term)
     (index : L.term) (length : L.term) : term_result =
+  if ordered then
+    { (combine_term result (L.Native ("specTecTextSlice", [base; index; length]))) with
+      premises = result.premises @ [
+        operation_check true (L.Comparison (L.Le, L.Binary ("+", index, length),
+          utf8_byte_size base)) "slice out of bounds";
+        operation_check true (L.Predicate
+          (L.Native ("specTecTextSliceValid", [base; index; length])))
+          "text result is not valid UTF-8"] }
+  else
   (* As with byte prefix/suffix builtins, Lean Strings can represent only valid
      UTF-8. A byte range that cuts a code point has no decomposition and hence
      no derivation, while the OCaml interpreter can produce invalid UTF-8. *)
@@ -628,16 +646,10 @@ let variables_in_premises (functions : (string * L.type_ref) list)
   List.concat_map
     (fun (premise : L.premise) ->
       let target : (string * L.type_ref) list = match premise with
-        | Holds application | NotHolds (application, _)
-        | NotExists (_, application, _) -> local_reference application.target
-        | Prop _ -> []
+        | Holds application | NotHolds (application, _) -> local_reference application.target
+        | Prop _ | RuntimeCheck _ -> []
       in
-      let bound : string list = match premise with
-        | NotExists (binders, _, _) -> List.map fst binders
-        | Holds _ | NotHolds _ | Prop _ -> []
-      in
-      target @ List.filter (fun (name, _) -> not (List.mem name bound))
-        (List.concat_map variables_in_term (Traversal.premise_terms premise)))
+      target @ List.concat_map variables_in_term (Traversal.premise_terms premise))
     premises
 
 let iteration_variables (type_parameters : string list) (iter : S.iter)
@@ -669,7 +681,9 @@ let translate_iteration (env : env) (type_parameters : string list)
     List.map (fun ((name, typ), collection) -> L.Variable (name, typ), collection, typ) inputs
     @ outputs
   in
-  let local_names : string list = List.map fst (elements @ body.binders) in
+  let local_names : string list = List.map fst (elements @ body.binders)
+    @ (if env.ordered then List.filter_map (fun (head, _, _) ->
+        match head with L.Variable (n, _) -> Some n | _ -> None) outputs else []) in
   let body_variables : (string * L.type_ref) list =
     unique_binders env at
       (List.concat_map variables_in_term body.terms
@@ -716,6 +730,8 @@ let translate_iteration (env : env) (type_parameters : string list)
         @ (match iter with List -> [ L.Holds (application tail_terms) ] | Opt -> []);
       conclusion = application populated }
   ] in
+  if env.ordered then Hashtbl.replace env.input_modes name
+    (List.init (List.length context + List.length inputs) Fun.id);
   let helper : L.declaration = L.Relation
     { name; type_parameters; equality_parameters = [];
       print_parameters = [];
@@ -742,6 +758,8 @@ let variant_instance (env : env) (at : region) (typ : L.type_ref) :
           (name, arguments, variant))
         (StringMap.find_opt name env.constructors)
 
+(* Pairs each case of the variant [source] with the same case of [target],
+   which must contain it with equal argument types. *)
 let variant_cases (env : env) (at : region) (source : L.type_ref)
     (target : L.type_ref) : (string * string * int) list option =
   match variant_instance env at source, variant_instance env at target with
@@ -764,12 +782,12 @@ let variant_cases (env : env) (at : region) (source : L.type_ref)
             (fun (target_mixop, _, _) -> Mixfix.eq_mixop source_mixop target_mixop)
             target_variant.cases with
           | None -> unsupported at
-              ("UpCastE target variant lacks constructor " ^ source_name)
+              ("variant cast target lacks constructor " ^ source_name)
           | Some (_, target_name, target_types) ->
               if instantiate source_variant source_arguments source_types
                  <> instantiate target_variant target_arguments target_types then
                 unsupported at
-                  ("UpCastE constructor argument types differ for " ^ source_name);
+                  ("variant cast constructor argument types differ for " ^ source_name);
               (source_name, target_name, List.length source_types))
         source_variant.cases)
   | _ -> None
@@ -952,6 +970,92 @@ let rec cast_term (env : env) (at : region) (source : L.type_ref)
       | None -> unsupported at
           ("UpCastE from " ^ type_code source ^ " to " ^ type_code target))
 
+(* Mirrors the interpreter's recursive downcast. The result has type
+   [Option target] and is [none] exactly when a variant case or an integer
+   lies outside the target. Each variant leaf becomes a helper named after its
+   position below [name]; bound variables extend those positions. *)
+let rec downcast_term (env : env) (type_parameters : string list) (at : region)
+    (name : string) (source : L.type_ref) (target : L.type_ref) (term : L.term) :
+    L.term * L.declaration list =
+  let source : L.type_ref = expand_expression_type env at source in
+  let target : L.type_ref = expand_expression_type env at target in
+  let position (index : int) : string = name ^ ":" ^ string_of_int index in
+  let convert (index : int) : L.type_ref -> L.type_ref -> L.term -> L.term * L.declaration list =
+    downcast_term env type_parameters at (position index)
+  in
+  let map_elements (combinator : string) (source_element : L.type_ref)
+      (target_element : L.type_ref) : L.term * L.declaration list =
+    let item : string = name ^ ":item" in
+    let (converted, helpers) : L.term * L.declaration list =
+      convert 0 source_element target_element (L.Variable (item, source_element))
+    in
+    L.Native (combinator, [ L.Lambda (item, source_element, converted); term ]), helpers
+  in
+  if source = target then L.Native ("Option.some", [ term ]), []
+  else match source, target with
+  | BuiltinType ("Int", []), BuiltinType ("Nat", []) ->
+      L.Native ("Int.toNat?", [ term ]), []
+  | BuiltinType ("List", [ source_element ]), BuiltinType ("List", [ target_element ]) ->
+      map_elements "List.mapM" source_element target_element
+  | BuiltinType ("Option", [ source_element ]), BuiltinType ("Option", [ target_element ]) ->
+      map_elements "Option.mapM" source_element target_element
+  | TupleType sources, TupleType targets when List.length sources = List.length targets ->
+      (* Bind each converted component in order, then rebuild the nested pairs. *)
+      let rec bind (index : int) (components : ((L.type_ref * L.type_ref) * L.term) list)
+          (values : L.term list) : L.term * L.declaration list =
+        match components with
+        | [] ->
+            L.Native ("Option.some",
+              [ nest_pairs (fun left right -> L.Tuple (left, right)) (List.rev values) ]), []
+        | ((source_component, target_component), value) :: rest
+          when source_component = target_component ->
+            bind (index + 1) rest (value :: values)
+        | ((source_component, target_component), value) :: rest ->
+            let (converted, helpers) : L.term * L.declaration list =
+              convert index source_component target_component value
+            in
+            let variable : string = position index ^ ":value" in
+            let (body, rest_helpers) : L.term * L.declaration list =
+              bind (index + 1) rest (L.Variable (variable, target_component) :: values)
+            in
+            L.Native ("Option.bind",
+              [ converted; L.Lambda (variable, target_component, body) ]),
+            helpers @ rest_helpers
+      in
+      bind 0 (List.combine (List.combine sources targets) (tuple_terms sources term)) []
+  | _ -> (
+      (* Pairing the target's cases with the source's also checks that they
+         keep their argument types, so the helper copies arguments unchanged. *)
+      match variant_instance env at source, variant_cases env at target source with
+      | Some (_, _, source_variant), Some cases ->
+          let target_name : string = match target with
+            | Name name | Applied (name, _) -> name
+            | _ -> assert false
+          in
+          let arm ((target_case, source_case, arity) : string * string * int) : string =
+            let fields : string =
+              String.concat "" (List.init arity (fun index -> " field" ^ string_of_int index))
+            in
+            "| ." ^ Identifier.print_identifier source_case ^ fields ^ " => some ("
+            ^ Identifier.print_identifier target_name ^ "."
+            ^ Identifier.print_identifier target_case ^ fields ^ ")"
+          in
+          let body : string =
+            "match arg0 with " ^ String.concat " " (List.map arm cases)
+            ^ (if List.length cases = List.length source_variant.cases then "" else " | _ => none")
+          in
+          let helper : L.declaration = L.Builtin
+            { name; type_parameters; equality_parameters = []; print_parameters = [];
+              parameters = [ source ]; result = L.BuiltinType ("Option", [ target ]); body }
+          in
+          L.Apply
+            { target = L.Global name;
+              type_arguments = List.map (fun name -> L.TypeParameter name) type_parameters;
+              instance_arguments = []; print_instance_arguments = []; arguments = [ term ] },
+          [ helper ]
+      | _ -> unsupported at
+          ("execution downcast from " ^ type_code source ^ " to " ^ type_code target))
+
 let rec translate_term (env : env) (type_parameters : string list)
     (functions : (string * L.type_ref) list) (next : int) (exp : S.exp) : term_result =
   let typ : L.type_ref = translate_type_with_parameters type_parameters (exp.note $ exp.at) in
@@ -1011,6 +1115,7 @@ let rec translate_term (env : env) (type_parameters : string list)
         if List.mem_assoc id.it functions then false
         else match StringMap.find_opt id.it env.functions with
         | Some RelationFunction -> false
+        | Some (BuiltinFunction []) when env.ordered && id.it = "fresh_typeId" -> false
         | Some (BuiltinRelation parameters) -> (
             match Builtin_relation.signature id.it parameters with
             | Ok _ -> false
@@ -1037,7 +1142,6 @@ let rec translate_term (env : env) (type_parameters : string list)
                        ^ " because its number of type arguments is unexpected"));
                 true
             | Error reason -> unsupported exp.at ("builtin call " ^ reason))
-        | Some (UnsupportedFunction kind) -> unsupported exp.at (kind ^ " call $" ^ id.it)
         | None -> unsupported exp.at ("unknown function call $" ^ id.it)
       in
       let translate_argument (next : int) (argument : S.arg) : term_result =
@@ -1094,7 +1198,8 @@ let rec translate_term (env : env) (type_parameters : string list)
       in
       let translated : term_result = combine_term result term in
       if operator = `DivOp || operator = `ModOp then
-        { translated with premises = translated.premises @ [ L.Prop (L.Comparison (L.Ne, right_term, L.Number ("0", result_type))) ] }
+        { translated with premises = translated.premises @ [ operation_check env.ordered
+            (L.Comparison (L.Ne, right_term, L.Number ("0", result_type))) "division by zero" ] }
       else translated
   | UpCastE (_, value) ->
       (* The source is the runtime type: -n and nat - nat are annotated Nat but
@@ -1130,7 +1235,7 @@ let rec translate_term (env : env) (type_parameters : string list)
           let result : terms_result = collect_terms recurse next [ base; index ] in
           (match result.terms with
           | [ base; index ] ->
-              text_slice result typ base index
+              text_slice ~ordered:env.ordered result typ base index
                 (L.Number ("1", L.BuiltinType ("Nat", [])))
           | _ -> assert false)
       | _ ->
@@ -1234,7 +1339,7 @@ let rec translate_term (env : env) (type_parameters : string list)
                    L.Native ("List.length", [ base ]))
               in
               { (combine_term result term) with
-                premises = result.premises @ [ L.Prop bound ] }
+                premises = result.premises @ [ operation_check env.ordered bound "slice out of bounds" ] }
           | _ -> assert false)
       | BuiltinType ("String", []), BuiltinType ("Nat", []),
         BuiltinType ("Nat", []) ->
@@ -1242,7 +1347,7 @@ let rec translate_term (env : env) (type_parameters : string list)
             collect_terms recurse next [ base; index; length ]
           in
           (match result.terms with
-          | [ base; index; length ] -> text_slice result typ base index length
+          | [ base; index; length ] -> text_slice ~ordered:env.ordered result typ base index length
           | _ -> assert false)
       | _ ->
           unsupported exp.at
@@ -1314,8 +1419,19 @@ let rec translate_term (env : env) (type_parameters : string list)
               { term =
                   L.Native
                     ("List.set", [ base_term; index_result.term; value_term ]);
-                premises = premises @ [ L.Prop bound ]; binders;
+                premises = premises @ [ operation_check env.ordered bound "update index out of bounds" ]; binders;
                 next = index_result.next; helpers }
+          | BuiltinType ("String", []) when env.ordered ->
+              { term = L.Native ("specTecTextUpdate", [base_term; index_result.term; value_term]);
+                premises = premises @ [
+                  operation_check true (L.Comparison (L.Lt, index_result.term, utf8_byte_size base_term))
+                    "update index out of bounds";
+                  operation_check true (L.Comparison (L.Eq, utf8_byte_size value_term,
+                    L.Number ("1", L.BuiltinType ("Nat", [])))) "text update requires one byte";
+                  operation_check true (L.Predicate (L.Native
+                    ("specTecTextUpdateValid", [base_term; index_result.term; value_term])))
+                    "text result is not valid UTF-8"];
+                binders; next = index_result.next; helpers }
           | BuiltinType ("String", []) ->
               let prefix : term_result =
                 fresh_term (L.BuiltinType ("String", [])) index_result.next
@@ -1352,7 +1468,42 @@ let rec translate_term (env : env) (type_parameters : string list)
                   binders @ prefix.binders @ old.binders @ suffix.binders;
                 next = suffix.next; helpers }
           | _ -> unsupported path.at "UpdE index on a non-list or non-text"))
+  | MatchE (base, pattern) when env.ordered ->
+      let result = recurse next base in
+      let test = match pattern with
+        | ListP (`Fixed n) -> L.Decide ([], L.Comparison (L.Eq,
+            L.Native ("List.length", [result.term]), L.Number (string_of_int n, L.BuiltinType ("Nat", []))))
+        | ListP `Nil -> L.Decide ([], L.Comparison (L.Eq,
+            L.Native ("List.length", [result.term]), L.Number ("0", L.BuiltinType ("Nat", []))))
+        | ListP `Cons -> L.Decide ([], L.Comparison (L.Gt,
+            L.Native ("List.length", [result.term]), L.Number ("0", L.BuiltinType ("Nat", []))))
+        | OptP `Some -> L.Native ("Option.isSome", [result.term])
+        | OptP `None -> L.Native ("Option.isNone", [result.term])
+        | CaseP mixop ->
+            let source = expanded base in
+            let name, arguments = match source with L.Name n -> n, [] | L.Applied (n, ts) -> n, ts | _ -> unsupported exp.at "non-variant execution match" in
+            let reference = constructor_reference env exp.at name arguments mixop in
+            let variant = StringMap.find name env.constructors in
+            let _, _, types = List.find (fun (_, n, _) -> n = reference.constructor_name) variant.cases in
+            L.MembershipTest ("exec:match:" ^ name ^ ":" ^ reference.constructor_name,
+              source, source, [reference.constructor_name, List.length types], List.length variant.cases = 1, result.term) in
+      { result with term = test }
   | MatchE _ -> unsupported exp.at ("MatchE expression " ^ S.Print.string_of_exp exp)
+  | DownCastE (_, base) when env.ordered && expanded base = L.BuiltinType ("Int", [])
+      && typ = L.BuiltinType ("Nat", []) ->
+      let result = recurse next base in
+      { result with term = L.Native ("Int.toNat", [result.term]);
+        premises = result.premises @ [L.Prop (L.Comparison (L.Le,
+          L.Number ("0", L.BuiltinType ("Int", [])), result.term))] }
+  | DownCastE (_, base) when env.ordered ->
+      let result = recurse next base in
+      let fresh = fresh_term typ result.next in
+      let converted, helpers = downcast_term env type_parameters exp.at
+        (env.iteration_prefix ^ ":downcast:" ^ string_of_int next)
+        (expanded base) typ result.term in
+      {fresh with premises = result.premises @ [L.Prop (L.Comparison (L.Eq,
+          converted, L.Native ("Option.some", [fresh.term])))];
+        binders = result.binders @ fresh.binders; helpers = result.helpers @ helpers}
   | DownCastE _ -> unsupported exp.at ("DownCastE expression " ^ S.Print.string_of_exp exp)
   | TupleE _ -> unsupported exp.at ("TupleE expression with unsupported arity: " ^ S.Print.string_of_exp exp)
 
@@ -1367,6 +1518,64 @@ and structure_field (env : env) (at : region) (typ : L.type_ref) (atom : S.atom)
           | None -> unsupported atom.at ("unknown structure field in " ^ name))
       | None -> unsupported at ("field access on non-structure " ^ name))
   | _ -> unsupported at "field access on non-structure type"
+
+(* AL assignment patterns traverse collections in the opposite direction from
+   expression iteration: one input vector binds several output vectors. *)
+let rec translate_binding_pattern (env : env) type_parameters functions next (exp : S.exp) : term_result =
+  let recurse = translate_binding_pattern env type_parameters functions in
+  let typ = translate_type_with_parameters type_parameters (exp.note $ exp.at) in
+  let build exps make = let r = collect_terms recurse next exps in combine_term r (make r.terms) in
+  match exp.it with
+  | IterE (body, (iter, variables)) when identity_iteration_variable exp = None ->
+      let body = recurse (next + 1) body in
+      if body.premises <> [] then unsupported exp.at "computed execution iteration pattern";
+      let vectors = iteration_variables type_parameters iter variables in
+      let element_names = List.map (fun ((n, _), _) -> n) vectors in
+      let context = variables_in_term body.term |> unique_binders env exp.at
+        |> List.filter (fun (n, _) -> not (List.mem n element_names)
+          && not (String.starts_with ~prefix:"_" n)) in
+      let context_terms = List.map (fun (n, t) -> L.Variable (n, t)) context in
+      let input_type = expand_expression_type env exp.at typ in
+      let vector_types = List.map (fun (_, term) -> match term with L.Variable (_, t) -> t | _ -> assert false) vectors in
+      let name = env.iteration_prefix ^ ":pattern-iter:" ^ string_of_int next in
+      let result = fresh_term typ body.next in
+      let tails = List.mapi (fun i typ -> "pattern-tail:" ^ string_of_int i, typ) (input_type :: vector_types) in
+      let tail_terms = List.map (fun (n,t) -> L.Variable (n,t)) tails in
+      let empty typ = L.Typed ((match iter with List -> L.ListLiteral [] | Opt -> L.Native ("Option.none", [])), typ) in
+      let populated head tail = match iter with List -> L.Binary ("::", head, tail) | Opt -> L.Native ("Option.some", [head]) in
+      let heads = body.term :: List.map (fun ((n,t), _) -> L.Variable (n,t)) vectors in
+      let application args = {L.target = L.Global name;
+        type_arguments = List.map (fun n -> L.TypeParameter n) type_parameters;
+        instance_arguments = []; print_instance_arguments = []; arguments = context_terms @ args} in
+      let helper = L.Relation {name; type_parameters; equality_parameters = []; print_parameters = [];
+        argument_types = List.map snd context @ (input_type :: vector_types); notation = None;
+        rules = [
+          {name = "empty"; binders = context; premises = [];
+            conclusion = application (List.map empty (input_type :: vector_types))};
+          {name = "step"; binders = unique_binders env exp.at
+            (context @ List.concat_map variables_in_term heads @ (if iter = List then tails else []));
+           premises = (if iter = List then [L.Holds (application tail_terms)] else []);
+           conclusion = application (List.map2 populated heads tail_terms)}]} in
+      Hashtbl.replace env.input_modes name (List.init (List.length context + 1) Fun.id);
+      {result with premises = [L.Holds (application (result.term :: List.map snd vectors))];
+        helpers = body.helpers @ [helper]}
+  | UpCastE (_, base) ->
+      let result = recurse next base in
+      {result with term = cast_term env exp.at
+        (translate_type_with_parameters type_parameters (base.note $ base.at)) typ result.term}
+  | CaseE notation ->
+      let name, args = match typ with L.Name n -> n, [] | L.Applied (n, ts) -> n, ts | _ -> unsupported exp.at "non-variant binding pattern" in
+      let reference = constructor_reference env exp.at name args (Domain.Mixfix.to_mixop notation) in
+      build (Domain.Mixfix.args notation) (fun args -> L.Constructor (reference, args))
+  | TupleE (_ :: _ :: _ as exps) -> build exps (nest_pairs (fun a b -> L.Tuple (a,b)))
+  | ListE exps -> build exps (fun exps -> L.Typed (L.ListLiteral exps, typ))
+  | ConsE (head, tail) -> build [head; tail] (function [h;t] -> L.Binary ("::",h,t) | _ -> assert false)
+  | OptE (Some exp) -> build [exp] (function [v] -> L.Native ("Option.some",[v]) | _ -> assert false)
+  | StrE fields ->
+      let fields = List.map (fun (atom, exp_) ->
+        let _, field = structure_field env exp.at typ atom in field.name, exp_) fields in
+      build (List.map snd fields) (fun values -> L.StructureLiteral (typ, List.combine (List.map fst fields) values))
+  | _ -> translate_term env type_parameters functions next exp
 
 let translate_application (env : env) (type_parameters : string list)
     (functions : (string * L.type_ref) list) (next : int) (name : string)
@@ -1443,10 +1652,26 @@ let rec translate_premise (env : env) (type_parameters : string list)
   | IfPr exp ->
       let result : condition_result = translate_condition env type_parameters functions next exp in
       { result.evaluation with terms = []; premises = result.evaluation.premises @ [ L.Prop result.condition ] }
+  | LetPr (pattern, value) when env.ordered ->
+      let value = translate_term env type_parameters functions next value in
+      let pattern = translate_binding_pattern env type_parameters functions value.next pattern in
+      { terms = []; premises = value.premises
+          @ [L.Prop (L.Comparison (L.Eq, pattern.term, value.term))] @ pattern.premises;
+        binders = value.binders @ pattern.binders; next = pattern.next;
+        helpers = value.helpers @ pattern.helpers }
   | LetPr _ -> unsupported premise.at ("LetPr premise " ^ S.Print.string_of_prem premise)
   | IterPr (body, (iter, variables, outputs)) ->
       let body : terms_result = translate_premise env type_parameters functions (next + 1) body in
-      translate_iteration env type_parameters functions premise.at next iter (variables @ outputs) body []
+      if env.ordered then
+        let outputs = iteration_variables type_parameters iter outputs
+          |> List.map (fun ((name, typ), vector) -> L.Variable (name, typ), vector, typ) in
+        translate_iteration env type_parameters functions premise.at next iter variables body outputs
+      else translate_iteration env type_parameters functions premise.at next iter (variables @ outputs) body []
+  | DebugPr exp when env.ordered ->
+      (* Discard the printed value, but retain calls and their failure effects. *)
+      let result : term_result = translate_term env type_parameters functions next exp in
+      { terms = []; premises = result.premises; binders = result.binders;
+        next = result.next; helpers = result.helpers }
   | DebugPr _ ->
       { terms = []; premises = []; binders = []; next; helpers = [] }
 
@@ -1463,24 +1688,32 @@ let translate_branch (env : env) (type_parameters : string list)
     | Expression exp -> translate_term env type_parameters functions next exp
     | Function (id, typ) -> pure_term next (L.Variable ("$" ^ id.it, typ))
   in
-  let result : terms_result = collect_terms translate_argument 0 branch.arguments in
+  let evaluate_prems result = List.fold_left
+    (fun (result : terms_result) (premise : S.prem) ->
+      let translated = translate_premise env type_parameters functions result.next premise in
+      { result with premises = result.premises @ translated.premises;
+        binders = result.binders @ translated.binders; next = translated.next;
+        helpers = result.helpers @ translated.helpers }) result branch.premises in
+  let arguments, result =
+    if env.ordered then
+      let inputs = Hashtbl.find env.input_modes relation_name in
+      let args_in, args_out = Lang.Hints.Input.split inputs branch.arguments in
+      let initial = collect_terms (fun next -> function
+        | Expression exp -> translate_binding_pattern env type_parameters functions next exp
+        | arg -> translate_argument next arg) 0 args_in in
+      let prems = evaluate_prems initial in
+      let output = collect_terms translate_argument prems.next args_out in
+      Lang.Hints.Input.combine inputs initial.terms output.terms,
+      { prems with premises = prems.premises @ output.premises;
+        binders = prems.binders @ output.binders; next = output.next;
+        helpers = prems.helpers @ output.helpers }
+    else
+      let initial = collect_terms translate_argument 0 branch.arguments in
+      initial.terms, evaluate_prems initial in
   let conclusion : L.application =
     { target = L.Global relation_name;
       type_arguments = List.map (fun name -> L.TypeParameter name) type_parameters;
-      instance_arguments = [];
-      print_instance_arguments = [];
-      arguments = result.terms }
-  in
-  let result : terms_result = List.fold_left
-    (fun (result : terms_result) (premise : S.prem) ->
-      let translated : terms_result =
-        translate_premise env type_parameters functions result.next premise
-      in
-      { result with premises = result.premises @ translated.premises;
-        binders = result.binders @ translated.binders; next = translated.next;
-        helpers = result.helpers @ translated.helpers })
-    result branch.premises
-  in
+      instance_arguments = []; print_instance_arguments = []; arguments } in
   let variables : (string * L.type_ref) list =
     List.concat_map variables_in_term
       (conclusion.arguments @ List.concat_map Traversal.premise_terms result.premises)
@@ -1878,8 +2111,10 @@ let translate_table (env : env) (id : S.id) (params : S.param list)
     (result_type : S.typ) (rows : S.tablerow list) : L.declaration list =
   let parameters : table_parameter list = List.map (table_parameter env) params in
   let relation_name : string = "$" ^ id.it in
-  let selector : L.selector = table_selector env relation_name parameters rows in
-  let selector_name : string = selector.name in
+  let selectors = if env.ordered then
+      List.mapi (fun index row -> table_selector env
+        (relation_name ^ ":matches:" ^ string_of_int index) parameters [row]) rows
+    else [table_selector env relation_name parameters rows] in
   let branches : branch list =
     List.mapi
       (fun index (row : S.tablerow) ->
@@ -1911,7 +2146,7 @@ let translate_table (env : env) (id : S.id) (params : S.param list)
                    in
                    let selected : L.term =
                      L.Apply
-                       { target = L.Global selector_name;
+                       { target = L.Global (if env.ordered then (List.nth selectors index).name else (List.hd selectors).name);
                          type_arguments = []; instance_arguments = [];
                          print_instance_arguments = [];
                          arguments = selector_arguments }
@@ -1922,7 +2157,7 @@ let translate_table (env : env) (id : S.id) (params : S.param list)
                           ( L.Eq,
                             selected,
                             L.Number
-                              (string_of_int index,
+                              (string_of_int (if env.ordered then 0 else index),
                                L.BuiltinType ("Nat", [])) ))
                    in
                    { rule with premises = premise :: rule.premises })
@@ -1931,7 +2166,7 @@ let translate_table (env : env) (id : S.id) (params : S.param list)
              L.Relation { relation with rules }
          | declaration -> declaration)
   in
-  L.Selector selector :: relation
+  List.map (fun selector -> L.Selector selector) selectors @ relation
 
 let rec validate_names (at : region) (names : string list) : unit =
   match names with
@@ -2009,13 +2244,31 @@ let translate_declaration (env : env) (decl : S.def) : L.declaration list =
                  translate_structure_fields env
                    (StringMap.find id.it env.structures);
              } ]
+    | ExternTypD (id, _) when env.ordered ->
+        let constructor : L.constructor =
+          { name = "mk"; arguments = []; result = L.Name id.it;
+            print_origin = id.it; print_format = L.PrintAbsent }
+        in
+        [ L.Datatype
+            { name = id.it; type_parameters = [];
+              constructors = [constructor] } ]
     | ExternTypD (id, _) ->
-        unsupported decl.at ("external type declaration " ^ id.it)
+        if not (List.mem id.it [ "json"; "archState"; "objectState" ]) then
+          unsupported decl.at ("unknown external type declaration " ^ id.it);
+        [ L.ExternType id.it ]
     | VarD _ ->
         (* TODO: Translate metavariable declarations. *)
         []
-    | ExternRelD (id, _, _, _) ->
-        unsupported decl.at ("external relation declaration " ^ id.it)
+    | ExternRelD (id, nottyp, _, _) ->
+        if not env.ordered && not (List.mem id.it
+          [ "Call_extern_func"; "Call_builtin_func"; "Call_extern_rel";
+            "ExternFunctionCall_eval_lctk"; "ExternFunctionCall_eval";
+            "ExternMethodCall_eval" ]) then
+          unsupported decl.at ("unknown external relation declaration " ^ id.it);
+        let argument_types = List.map translate_type (Mixfix.args nottyp.it) in
+        [ Extern_model.relation id.it argument_types
+            (if env.ordered then None else Extern_model.relation_predicate id.it)
+            (Some (translate_notation nottyp.it)) ]
     | RelD (id, _, _, _, Some otherwise, _) ->
         unsupported otherwise.at ("otherwise of relation " ^ id.it)
     | RelD (id, nottyp, _, rulegroups, None, _) ->
@@ -2036,8 +2289,15 @@ let translate_declaration (env : env) (decl : S.def) : L.declaration list =
                notation)
         then unsupported nottyp.at "relation notation without a visible atom";
         translate_relation env id.it [] argument_types branches (Some notation)
-    | ExternDecD (id, _, _, _, _) ->
-        unsupported decl.at ("external function declaration " ^ id.it)
+    | ExternDecD (id, tparams, params, result, _) ->
+        if not env.ordered &&
+          (tparams <> [] || not (List.mem id.it [ "init_archState"; "init_objectState" ]))
+        then unsupported decl.at ("unknown external function declaration " ^ id.it);
+        let type_parameters = List.map (fun (p : S.tparam) -> p.it) tparams in
+        let arguments = List.map (translate_parameter_with_parameters type_parameters) params in
+        [ Extern_model.relation ~type_parameters ("$" ^ id.it)
+            (arguments @ [ translate_type_with_parameters type_parameters result ])
+            (if env.ordered then None else Extern_model.function_predicate id.it) None ]
     | BuiltinDecD (id, tparams, params, result, _) ->
         let type_parameters : string list =
           List.map (fun (parameter : S.tparam) -> parameter.it) tparams
@@ -2054,7 +2314,18 @@ let translate_declaration (env : env) (decl : S.def) : L.declaration list =
         let result : L.type_ref =
           translate_type_with_parameters type_parameters result
         in
-        if Builtin_relation.is_relation id.it then
+        if env.ordered && id.it = "fresh_typeId" then (
+          if type_parameters <> [] || parameters <> []
+             || expand_expression_type env decl.at result <> L.BuiltinType ("String", []) then
+            unsupported decl.at
+              "builtin function fresh_typeId because its signature differs from the SpecTec implementation";
+          (* The ordered emitter supplies a freshId plan, never an empty clause
+             list or a pure function. Keep its original typed call signature. *)
+          [ L.Relation
+              { name = "$" ^ id.it; type_parameters = [];
+                equality_parameters = []; print_parameters = [];
+                argument_types = [ result ]; rules = []; notation = None } ])
+        else if Builtin_relation.is_relation id.it then
           let (expected_parameters, expected_result) : L.type_ref list * L.type_ref =
             match Builtin_relation.signature id.it type_parameters with
             | Ok signature -> signature
@@ -2115,6 +2386,7 @@ let translate_declaration (env : env) (decl : S.def) : L.declaration list =
           validate_names decl.at
             (List.map (fun (rule : L.rule) -> rule.name) rules)
       | L.TypeAlias _ -> ()
+      | L.ExternType _ -> ()
       | L.Structure _ -> ()
       | L.Builtin _ | L.Selector _ | L.Coercion _ | L.Membership _ -> ())
     declarations;

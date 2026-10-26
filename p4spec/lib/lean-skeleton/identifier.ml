@@ -3,6 +3,7 @@ let lean_keywords : string list =
     "end"; "example"; "export"; "extends"; "false"; "for"; "fun";
     "from"; "have"; "if"; "import"; "in"; "inductive"; "instance"; "let"; "macro";
     "match"; "mutual"; "namespace"; "noncomputable"; "notation";
+    "prefix"; "infix"; "infixl"; "infixr"; "postfix"; "scoped";
     "opaque"; "open"; "partial"; "private"; "protected"; "public";
     "repeat"; "return"; "set_option"; "show"; "structure"; "syntax"; "then"; "theorem";
     "true"; "universe"; "unsafe"; "variable"; "where"; "while";
