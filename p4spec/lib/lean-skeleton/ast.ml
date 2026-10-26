@@ -35,6 +35,7 @@ module Lean = struct
     | Tuple of term * term
     | ListLiteral of term list
     | StructureLiteral of type_ref * (string * term) list
+    | StructureUpdate of type_ref * term * string * term
     | Projection of string * string * term
     | Index of term * term
     | Decide of prop

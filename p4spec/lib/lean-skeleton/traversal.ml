@@ -23,6 +23,8 @@ let rec map_term_types (map : L.type_ref -> L.type_ref) (term : L.term) : L.term
   | ListLiteral values -> L.ListLiteral (List.map recurse values)
   | StructureLiteral (typ, fields) ->
       L.StructureLiteral (map typ, List.map (fun (name, value) -> name, recurse value) fields)
+  | StructureUpdate (typ, base, field, value) ->
+      L.StructureUpdate (map typ, recurse base, field, recurse value)
   | Projection (name, field, value) -> L.Projection (name, field, recurse value)
   | Index (base, index) -> L.Index (recurse base, recurse index)
   | Decide prop -> L.Decide (map_prop_types map prop)
@@ -75,6 +77,7 @@ let term_children (term : L.term) : L.term list =
   | Unary (_, value) | Typed (value, _) | Projection (_, _, value) -> [ value ]
   | Binary (_, left, right) | Tuple (left, right) | Index (left, right) -> [ left; right ]
   | StructureLiteral (_, fields) -> List.map snd fields
+  | StructureUpdate (_, base, _, value) -> [ base; value ]
   | Decide prop -> prop_terms prop
   | Variable _ | Boolean _ | Number _ | Text _ | FunctionReference _ -> []
 
