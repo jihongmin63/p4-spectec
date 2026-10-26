@@ -18,8 +18,7 @@ let rec type_references (typ : L.type_ref) : StringSet.t =
       StringSet.add name (unions (List.map type_references arguments))
   | BuiltinType (_, arguments) -> unions (List.map type_references arguments)
   | TypeParameter _ -> StringSet.empty
-  | Pair (left, right) ->
-      StringSet.union (type_references left) (type_references right)
+  | TupleType elements -> unions (List.map type_references elements)
   | RelationType (arguments, result) ->
       unions (List.map type_references (result :: arguments))
 
@@ -54,7 +53,8 @@ let rec term_references (term : L.term) : StringSet.t =
 let application_references (application : L.application) : StringSet.t =
   StringSet.union (reference_names application.target)
     (unions (List.map type_references
-       (application.type_arguments @ application.instance_arguments)
+       (application.type_arguments @ application.instance_arguments
+       @ application.print_instance_arguments)
        @ List.map term_references application.arguments))
 
 let premise_references (premise : L.premise) : StringSet.t =
@@ -108,6 +108,82 @@ let make_graph (declarations : L.located_declaration list) : graph =
        { source; dependencies = references source.declaration; index }))
     declarations
   |> List.to_seq |> StringMap.of_seq
+
+let print_roots (declarations : L.located_declaration list) :
+    (L.type_ref * Util.Source.region) list =
+  List.concat_map
+    (fun (located : L.located_declaration) ->
+      match located.declaration with
+      | L.Relation { name = "$print_"; _ } -> []
+      | L.Relation { rules; _ } ->
+          Translator.relation_applications rules
+          |> List.concat_map (fun (application : L.application) ->
+                 let direct : L.type_ref list =
+                   match application.target, application.type_arguments with
+                   | L.Global "$print_", typ :: _ -> [ typ ]
+                   | _ -> []
+                 in
+                 List.map
+                   (fun typ -> typ, located.at)
+                   (direct @ application.print_instance_arguments))
+      | _ -> [])
+    declarations
+  |> List.sort_uniq (fun (left, _) (right, _) -> compare left right)
+
+let reachable_printer_names (graph : graph)
+    (roots : (L.type_ref * Util.Source.region) list) : StringSet.t =
+  let rec visit_type (at : Util.Source.region) (seen : StringSet.t)
+      (typ : L.type_ref) : StringSet.t =
+    match typ with
+    | TypeParameter _ -> seen
+    | BuiltinType (_, arguments) | TupleType arguments ->
+        List.fold_left (visit_type at) seen arguments
+    | RelationType _ -> seen
+    | Name name -> visit_named at seen name []
+    | Applied (name, arguments) -> visit_named at seen name arguments
+  and visit_named (at : Util.Source.region) (seen : StringSet.t)
+      (name : string) (arguments : L.type_ref list) : StringSet.t =
+    let seen : StringSet.t = List.fold_left (visit_type at) seen arguments in
+    if StringSet.mem name seen then seen
+    else
+      match StringMap.find_opt name graph with
+      | None -> seen
+      | Some node -> (
+          match node.source.declaration with
+          | TypeAlias alias ->
+              if List.length alias.type_parameters <> List.length arguments then
+                Translator.unsupported at
+                  (Printf.sprintf "print type arity in %s: expected %d, got %d"
+                     name (List.length alias.type_parameters)
+                     (List.length arguments));
+              let bindings : (string * L.type_ref) list =
+                List.combine alias.type_parameters arguments
+              in
+              visit_type node.source.at seen
+                (Translator.substitute_type_parameters bindings alias.body)
+          | Datatype datatype ->
+              if List.length datatype.type_parameters <> List.length arguments
+                 && arguments <> [] then
+                Translator.unsupported at
+                  (Printf.sprintf "print type arity in %s: expected %d, got %d"
+                     name (List.length datatype.type_parameters)
+                     (List.length arguments));
+              let seen : StringSet.t = StringSet.add name seen in
+              List.fold_left
+                (fun seen (constructor : L.constructor) ->
+                  let used : int list =
+                    L.print_format_holes constructor.print_format in
+                  List.fold_left (visit_type node.source.at) seen
+                    (List.filteri
+                       (fun index _ -> List.mem index used)
+                       constructor.arguments))
+                seen datatype.constructors
+          | Structure _ -> StringSet.add name seen
+          | _ -> seen)
+  in
+  List.fold_left
+    (fun seen (typ, at) -> visit_type at seen typ)
+    StringSet.empty roots
 
 let names_in_order (graph : graph) : string list =
   StringMap.bindings graph
@@ -230,6 +306,46 @@ let expand_declaration (lookup : string -> L.type_alias option)
               relation.rules }
   | TypeAlias _ | Builtin _ | Coercion _ | Membership _ -> source.declaration
 
+let expand_print_instance_arguments (graph : graph)
+    (source : L.located_declaration) : L.located_declaration =
+  let lookup (name : string) : L.type_alias option =
+    match StringMap.find_opt name graph with
+    | Some { source = { declaration = TypeAlias alias; _ }; _ } -> Some alias
+    | _ -> None
+  in
+  let expand : L.type_ref -> L.type_ref =
+    Translator.expand_type_aliases lookup source.at []
+  in
+  let normalize (application : L.application) : L.application =
+    { application with
+      print_instance_arguments =
+        List.map expand application.print_instance_arguments }
+  in
+  let application (value : L.application) : L.application =
+    normalize
+      { value with
+        arguments =
+          List.map (Traversal.map_term_applications normalize) value.arguments }
+  in
+  let declaration : L.declaration =
+    match source.declaration with
+    | Relation relation ->
+        L.Relation
+          { relation with
+            rules =
+              List.map
+                (fun (rule : L.rule) ->
+                  { rule with
+                    premises =
+                      List.map
+                        (Traversal.map_premise_applications normalize)
+                        rule.premises;
+                    conclusion = application rule.conclusion })
+                relation.rules }
+    | declaration -> declaration
+  in
+  { source with declaration }
+
 let validate_relation_values (names : string list)
     (source : L.located_declaration) : unit =
   let rec validate_term (term : L.term) : unit =
@@ -300,8 +416,7 @@ let rec contains_type_name (names : StringSet.t) (typ : L.type_ref) : bool =
   | Applied (name, arguments) ->
       StringSet.mem name names || List.exists (contains_type_name names) arguments
   | BuiltinType (_, arguments) -> List.exists (contains_type_name names) arguments
-  | Pair (left, right) ->
-      contains_type_name names left || contains_type_name names right
+  | TupleType elements -> List.exists (contains_type_name names) elements
   | RelationType (arguments, result) ->
       List.exists (contains_type_name names) (result :: arguments)
   | TypeParameter _ -> false
@@ -394,7 +509,7 @@ let manual_equality (graph : graph) (at : Util.Source.region)
         match typ with
         | BuiltinType ("List", [ element ]) -> L.EqualityList element
         | BuiltinType ("Option", [ element ]) -> L.EqualityOption element
-        | Pair (left, right) -> L.EqualityPair (left, right)
+        | TupleType elements -> L.EqualityTuple elements
         | Name name | Applied (name, _) -> (
             let declaration : L.declaration option =
               match StringMap.find_opt name root_declarations with
@@ -429,7 +544,7 @@ let manual_equality (graph : graph) (at : Util.Source.region)
               constructors
         | EqualityStructure fields -> List.map snd fields
         | EqualityList element | EqualityOption element -> [ element ]
-        | EqualityPair (left, right) -> [ left; right ]
+        | EqualityTuple elements -> elements
       in
       List.fold_left
         (fun shapes child ->
@@ -448,17 +563,152 @@ let manual_equality (graph : graph) (at : Util.Source.region)
         (fun typ -> typ, equality_function_name root_names typ)
         root_types }
 
-let data_groups (graph : graph) (at : Util.Source.region)
-    (declarations : L.declaration list) (group : L.declaration_group) :
+let print_function_name (root_names : StringSet.t) (typ : L.type_ref) : string =
+  match typ with
+  | Name name | Applied (name, _) when StringSet.mem name root_names ->
+      "print_" ^ name
+  | _ ->
+      let owner : string = String.concat "," (StringSet.elements root_names) in
+      "print_shape_"
+      ^ String.sub
+          (Digest.to_hex
+             (Digest.string (owner ^ ":" ^ Translator.type_code typ)))
+          0 12
+
+let manual_printer (graph : graph) (at : Util.Source.region)
+    (declarations : L.declaration list) : L.manual_printer =
+  let root_names : StringSet.t =
+    declarations |> List.map defined_name |> StringSet.of_list
+  in
+  let root_declarations : L.declaration StringMap.t =
+    declarations
+    |> List.map (fun declaration -> defined_name declaration, declaration)
+    |> List.to_seq |> StringMap.of_seq
+  in
+  let type_parameters : string list =
+    match declarations with
+    | declaration :: _ -> data_type_parameters declaration
+    | [] -> assert false
+  in
+  let alias (name : string) : L.type_alias option =
+    match StringMap.find_opt name graph with
+    | Some { source = { declaration = TypeAlias alias; _ }; _ } -> Some alias
+    | _ -> None
+  in
+  let expand (typ : L.type_ref) : L.type_ref =
+    Translator.expand_type_aliases alias at [] typ
+  in
+  let rec collect (trail : (string * L.type_ref) list)
+      (shapes : L.print_shape list) (typ : L.type_ref) : L.print_shape list =
+    let typ : L.type_ref = expand typ in
+    let trail : (string * L.type_ref) list =
+      match typ with
+      | Name name | Applied (name, _) -> (
+          match List.assoc_opt name trail with
+          | Some previous when previous <> typ ->
+              Translator.unsupported at
+                ("SpecTecPrint non-uniform recursive type "
+                ^ Translator.type_code typ ^ " after "
+                ^ Translator.type_code previous)
+          | Some _ -> trail
+          | None -> (name, typ) :: trail)
+      | _ -> trail
+    in
+    if List.exists (fun (shape : L.print_shape) -> shape.print_type = typ) shapes
+    then shapes
+    else
+      let kind : L.print_shape_kind =
+        match typ with
+        | BuiltinType ("List", [ element ]) -> L.PrintList (expand element)
+        | BuiltinType ("Option", [ element ]) -> L.PrintOption (expand element)
+        | TupleType elements -> L.PrintTuple (List.map expand elements)
+        | RelationType _ -> L.PrintFailure
+        | Name name | Applied (name, _) -> (
+            let declaration : L.declaration option =
+              match StringMap.find_opt name root_declarations with
+              | Some declaration -> Some declaration
+              | None ->
+                  Option.map
+                    (fun (node : node) -> node.source.declaration)
+                    (StringMap.find_opt name graph)
+            in
+            match declaration with
+            | Some (Datatype datatype) ->
+                let constructors : L.constructor list =
+                  instantiate_datatype at typ datatype
+                  |> List.map (fun (constructor : L.constructor) ->
+                         { constructor with
+                           arguments = List.map expand constructor.arguments })
+                in
+                L.PrintDatatype constructors
+            | Some (Structure _) when typ = L.Name name -> L.PrintStructure
+            | _ ->
+                Translator.unsupported at
+                  ("SpecTecPrint nested recursive type "
+                  ^ Translator.type_code typ))
+        | _ ->
+            Translator.unsupported at
+              ("SpecTecPrint nested shape " ^ Translator.type_code typ)
+      in
+      let shape : L.print_shape =
+        { print_name = print_function_name root_names typ;
+          print_type = typ; print_kind = kind }
+      in
+      let shapes : L.print_shape list = shapes @ [ shape ] in
+      let children : L.type_ref list =
+        match kind with
+        | PrintDatatype constructors ->
+            List.concat_map
+              (fun (constructor : L.constructor) ->
+                let used : int list =
+                  L.print_format_holes constructor.print_format in
+                List.filteri
+                  (fun index _ -> List.mem index used)
+                  constructor.arguments)
+              constructors
+        | PrintList element | PrintOption element -> [ element ]
+        | PrintTuple elements -> elements
+        | PrintStructure | PrintFailure -> []
+      in
+      List.fold_left
+        (fun shapes child ->
+          let child : L.type_ref = expand child in
+          let needs_shape : bool =
+            match child with
+            | BuiltinType (("List" | "Option"), [ _ ]) | TupleType _
+            | RelationType _ -> true
+            | Name _ | Applied _ -> contains_type_name root_names child
+            | _ -> false
+          in
+          if needs_shape then collect trail shapes child else shapes)
+        shapes children
+  in
+  let root_types : L.type_ref list = List.map data_type declarations in
+  let shapes : L.print_shape list = List.fold_left (collect []) [] root_types in
+  { printer_type_parameters = type_parameters;
+    printer_shapes = shapes;
+    printer_instances =
+      List.map
+        (fun typ -> typ, print_function_name root_names typ)
+        root_types }
+
+let data_groups (graph : graph) (print_names : StringSet.t)
+    (at : Util.Source.region) (declarations : L.declaration list)
+    (group : L.declaration_group) :
     L.declaration_group list =
   let names : StringSet.t =
     declarations |> List.map defined_name |> StringSet.of_list
   in
-  if List.exists (has_nested_recursion names) declarations then
-    [ group; L.ManualDecidableEq (manual_equality graph at declarations) ]
-  else [ L.DerivingDecidableEq group ]
+  let equality : L.declaration_group list =
+    if List.exists (has_nested_recursion names) declarations then
+      [ group; L.ManualDecidableEq (manual_equality graph at declarations) ]
+    else [ L.DerivingDecidableEq group ]
+  in
+  if StringSet.disjoint names print_names then equality
+  else equality @ [ L.ManualPrinter (manual_printer graph at declarations) ]
 
-let group_program (graph : graph) (names : string list) : L.program =
+let group_program (graph : graph) (print_names : StringSet.t)
+    (names : string list) : L.program =
   let sources : L.located_declaration list =
     List.map (fun name -> (StringMap.find name graph).source) names
   in
@@ -490,7 +740,7 @@ let group_program (graph : graph) (names : string list) : L.program =
       aliases;
   match sources with
   | [ source ] when data_declaration source.declaration ->
-      data_groups graph source.at [ source.declaration ]
+      data_groups graph print_names source.at [ source.declaration ]
         (L.Single source.declaration)
   | [ source ] -> [ L.Single source.declaration ]
   | _ ->
@@ -533,14 +783,23 @@ let group_program (graph : graph) (names : string list) : L.program =
           (topological_components alias_graph)
       in
       (if List.for_all data_declaration declarations then
-         data_groups graph at declarations (L.Mutual declarations)
+         data_groups graph print_names at declarations (L.Mutual declarations)
        else [ L.Mutual declarations ])
       @ ordered_aliases
 
 let order (declarations : L.located_declaration list) :
     (L.program, Diagnostic.t) result =
-  let graph : graph = make_graph declarations in
-  try Ok (List.concat_map (group_program graph) (topological_components graph))
+  try
+    let declarations : L.located_declaration list =
+      let graph : graph = make_graph declarations in
+      List.map (expand_print_instance_arguments graph) declarations
+    in
+    let graph : graph = make_graph declarations in
+    let print_names : StringSet.t =
+      reachable_printer_names graph (print_roots declarations) in
+    Ok
+      (List.concat_map (group_program graph print_names)
+         (topological_components graph))
   with Translator.Unsupported_il diagnostic -> Error diagnostic
 
 (* Missing names retain the untranslated root through transitive removals. *)
@@ -594,14 +853,20 @@ let prune (graph : graph) (missing : string StringMap.t) :
 
 let order_all (declarations : L.located_declaration list) :
     L.program * Diagnostic.t list =
+  let declarations : L.located_declaration list =
+    let graph : graph = make_graph declarations in
+    List.map (expand_print_instance_arguments graph) declarations
+  in
   let (graph, dependency_diagnostics) : graph * Diagnostic.t list =
     prune (make_graph declarations) StringMap.empty
   in
+  let print_names : StringSet.t =
+    reachable_printer_names graph (print_roots declarations) in
   let (invalid, scc_diagnostics) : string StringMap.t * Diagnostic.t list =
     List.fold_left
       (fun (invalid, diagnostics) names ->
         try
-          ignore (group_program graph names);
+          ignore (group_program graph print_names names);
           invalid, diagnostics
         with Translator.Unsupported_il diagnostic ->
           let messages : Diagnostic.t list =
@@ -656,5 +921,6 @@ let order_all (declarations : L.located_declaration list) :
         || StringSet.mem name used_generated)
       graph
   in
-  ( List.concat_map (group_program graph) (topological_components graph),
+  ( List.concat_map (group_program graph print_names)
+      (topological_components graph),
     dependency_diagnostics @ scc_diagnostics @ transitive_diagnostics )

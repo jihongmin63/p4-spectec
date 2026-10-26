@@ -14,6 +14,19 @@ example : decide (nestedLeft = nestedLeft) = true := by decide
 
 example : decide (nestedLeft = nestedRight) = false := by decide
 
+def tripleFirst : SpecTec.node :=
+  .TRIPLE (.BRANCH (.LEAF 1), .BRANCH (.LEAF 2), .BRANCH (.LEAF 3))
+
+def tripleSecondDiff : SpecTec.node :=
+  .TRIPLE (.BRANCH (.LEAF 1), .BRANCH (.LEAF 4), .BRANCH (.LEAF 3))
+
+def tripleThirdDiff : SpecTec.node :=
+  .TRIPLE (.BRANCH (.LEAF 1), .BRANCH (.LEAF 2), .BRANCH (.LEAF 4))
+
+example : decide (tripleFirst = tripleSecondDiff) = false := by decide
+
+example : decide (tripleFirst = tripleThirdDiff) = false := by decide
+
 example : decide (SpecTec.node.MAYBE none = SpecTec.node.MAYBE none) = true := by
   decide
 

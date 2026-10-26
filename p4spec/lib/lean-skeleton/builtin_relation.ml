@@ -11,7 +11,7 @@ let names : string list =
   [ "find_map"; "find_maps"; "add_map"; "adds_map"; "update_map"; "assoc_";
     "distinct_"; "partition_"; "max_nat"; "min_nat"; "strip_prefix";
     "strip_suffix"; "shl"; "shr"; "shr_arith"; "int_to_bitstr";
-    "bitstr_to_int" ]
+    "bitstr_to_int"; "print_" ]
 
 let is_relation (name : string) : bool = List.mem name names
 
@@ -42,13 +42,17 @@ let signature (name : string) (type_parameters : string list) :
   | "add_map" | "update_map" -> expect [ "K"; "V" ] [ map; key; value ] map
   | "adds_map" -> expect [ "K"; "V" ] [ map; list key; list value ] map
   | "assoc_" ->
-      expect [ "X"; "Y" ] [ left; list (L.Pair (left, right)) ] (option right)
+      expect [ "X"; "Y" ] [ left; list (L.TupleType [ left; right ]) ]
+        (option right)
   | "distinct_" -> expect [ "K" ] [ list key ] bool
-  | "partition_" -> expect [ "X" ] [ list left; nat ] (L.Pair (list left, list left))
+  | "partition_" ->
+      expect [ "X" ] [ list left; nat ]
+        (L.TupleType [ list left; list left ])
   | "max_nat" | "min_nat" -> expect [] [ list nat ] nat
   | "strip_prefix" | "strip_suffix" -> expect [] [ text; text ] text
   | "shl" | "shr" | "int_to_bitstr" | "bitstr_to_int" -> expect [] [ int; int ] int
   | "shr_arith" -> expect [] [ int; int; int ] int
+  | "print_" -> expect [ "X" ] [ left ] text
   | _ -> Error (name ^ " because no relation builtin implementation is known")
 
 let variable (name : string) (typ : L.type_ref) : L.term = L.Variable (name, typ)
@@ -61,7 +65,7 @@ let some (term : L.term) : L.term = native "Option.some" [ term ]
 let application (name : string) (types : L.type_ref list) (arguments : L.term list) :
     L.application =
   { target = L.Global ("$" ^ name); type_arguments = types;
-    instance_arguments = []; arguments }
+    instance_arguments = []; print_instance_arguments = []; arguments }
 
 let holds (name : string) (types : L.type_ref list) (arguments : L.term list) :
     L.premise =
@@ -75,11 +79,12 @@ let rule (relation : string) (types : L.type_ref list) (name : string)
     (arguments : L.term list) : L.rule =
   { name; binders; premises; conclusion = application relation types arguments }
 
-let relation (name : string) (type_parameters : string list)
+let relation ?(print_parameters = []) (name : string)
+    (type_parameters : string list)
     (argument_types : L.type_ref list) (rules : L.rule list) : L.declaration =
   L.Relation
     { name = "$" ^ name; type_parameters; equality_parameters = [];
-      argument_types; rules; notation = None }
+      print_parameters; argument_types; rules; notation = None }
 
 (* First pair with key k: a later pair is reached only past pairs with other
    keys, as in Maps.map_find_opt and Lists.assoc_. *)
@@ -189,7 +194,7 @@ let adds_map (relation_types : L.type_ref list) : L.declaration list =
 
 let assoc (relation_types : L.type_ref list) : L.declaration list =
   let types : L.type_ref list = [ left; right ] in
-  let entries : L.type_ref = list (L.Pair (left, right)) in
+  let entries : L.type_ref = list (L.TupleType [ left; right ]) in
   let k : L.term = variable "key" left in
   let other : L.term = variable "other" left in
   let v : L.term = variable "value" right in
@@ -305,6 +310,18 @@ let bitstr_to_int (relation_types : L.type_ref list) : L.declaration list =
           [ comparison L.Lt (number "0" int) width; comparison L.Le width bit_width_limit ]
           [ width; n; centered ] ] ]
 
+(* P4.Unparse.pp_value returns text exactly when SpecTecPrint returns some text. *)
+let print (relation_types : L.type_ref list) : L.declaration list =
+  let value : L.term = variable "value" left in
+  let result : L.term = variable "result" text in
+  [ relation ~print_parameters:[ "X" ] "print_" [ "X" ] relation_types
+      [ rule "print_" [ left ] "success"
+          [ ("value", left); ("result", text) ]
+          [ comparison L.Eq
+              (native "SpecTecPrint.print?" [ value ])
+              (some result) ]
+          [ value; result ] ] ]
+
 let translate (name : string) (type_parameters : string list)
     (constructor : constructor_lookup) : (L.declaration list, string) result =
   match signature name type_parameters with
@@ -325,4 +342,5 @@ let translate (name : string) (type_parameters : string list)
       | "shl" | "shr" | "shr_arith" -> Ok (shift name types)
       | "int_to_bitstr" -> Ok (int_to_bitstr types)
       | "bitstr_to_int" -> Ok (bitstr_to_int types)
+      | "print_" -> Ok (print types)
       | _ -> Error (name ^ " because no relation builtin implementation is known"))

@@ -25,12 +25,29 @@ let rec print_type (bound : string list) (typ : L.type_ref) : string =
       "(" ^ String.concat " "
         (print_global_name bound name :: List.map (print_type bound) arguments)
       ^ ")"
-  | Pair (left, right) ->
-      "(" ^ print_type bound left ^ " × " ^ print_type bound right ^ ")"
+  | TupleType elements -> print_tuple_type bound elements
   | RelationType (arguments, result) ->
       "(" ^ String.concat " → "
         (List.map (print_type bound) (arguments @ [ result ]) @ [ "Prop" ])
       ^ ")"
+
+and print_tuple_type (bound : string list) (elements : L.type_ref list) : string =
+  match elements with
+  | [] -> invalid_arg "cannot print an empty tuple type"
+  | [ element ] -> print_type bound element
+  | first :: rest ->
+      "(" ^ print_type bound first ^ " × " ^ print_tuple_type bound rest ^ ")"
+
+let tuple_pattern (prefix : string) (elements : L.type_ref list) : string =
+  let rec nest (index : int) (remaining : L.type_ref list) : string =
+    match remaining with
+    | [] -> invalid_arg "cannot print an empty tuple pattern"
+    | [ _ ] -> prefix ^ string_of_int index
+    | _ :: rest ->
+        "(" ^ prefix ^ string_of_int index ^ ", " ^ nest (index + 1) rest
+        ^ ")"
+  in
+  nest 0 elements
 
 let escape_string (value : string) : string =
   let buffer : Buffer.t = Buffer.create (String.length value) in
@@ -48,10 +65,135 @@ let escape_string (value : string) : string =
     value;
   Buffer.contents buffer
 
+let print_prelude : string =
+  {lean|class SpecTecPrint (α : Type) where
+  print? : α → Option String
+
+def specTecPrintFiltered (parts : List (Option String)) : Option String :=
+  match parts.filterMap id with
+  | [] => none
+  | present => some (" ".intercalate present)
+
+def specTecPrintSequence (parts : List (Option String)) : Option String :=
+  some (" ".intercalate (parts.map (fun part => part.getD "")))
+
+def specTecPrintFuse (left right : Option String) : Option String :=
+  some (left.getD "" ++ right.getD "")
+
+def specTecPrintFinish (fragment : Option String) : String :=
+  fragment.getD ""
+
+def specTecPrintDecimalByte (value : Nat) : String :=
+  String.ofList
+    [ Char.ofNat (48 + value / 100),
+      Char.ofNat (48 + (value / 10) % 10),
+      Char.ofNat (48 + value % 10) ]
+
+def specTecPrintEscapeByte (byte : UInt8) : String :=
+  let value := byte.toNat
+  match value with
+  | 34 => "\\\""
+  | 92 => "\\\\"
+  | 10 => "\\n"
+  | 9 => "\\t"
+  | 13 => "\\r"
+  | 8 => "\\b"
+  | value =>
+      if 32 ≤ value ∧ value ≤ 126 then String.singleton (Char.ofNat value)
+      else "\\" ++ specTecPrintDecimalByte value
+
+def specTecPrintEscapeText (value : String) : String :=
+  value.toUTF8.foldl (fun result byte => result ++ specTecPrintEscapeByte byte) ""
+
+instance : SpecTecPrint Bool :=
+  ⟨fun value => some (if value then "true" else "false")⟩
+
+instance : SpecTecPrint Nat := ⟨fun value => some (toString value)⟩
+
+instance : SpecTecPrint Int := ⟨fun value => some (toString value)⟩
+
+instance : SpecTecPrint String :=
+  ⟨fun value => some (specTecPrintEscapeText value)⟩
+
+def specTecPrintList {α : Type} [SpecTecPrint α]
+    (value : List α) : Option String :=
+  match value with
+  | [] => some ""
+  | head :: tail => do
+      let printedHead ← SpecTecPrint.print? head
+      let printedTail ← specTecPrintList tail
+      return match tail with
+        | [] => printedHead
+        | _ => printedHead ++ " " ++ printedTail
+termination_by structural value
+
+instance {α : Type} [SpecTecPrint α] : SpecTecPrint (List α) :=
+  ⟨specTecPrintList⟩
+
+def specTecPrintOption {α : Type} [SpecTecPrint α]
+    (value : Option α) : Option String :=
+  match value with
+  | none => some ""
+  | some item => SpecTecPrint.print? item
+
+instance {α : Type} [SpecTecPrint α] : SpecTecPrint (Option α) :=
+  ⟨specTecPrintOption⟩
+
+instance {α β : Type} [SpecTecPrint α] [SpecTecPrint β] :
+    SpecTecPrint (α × β) :=
+  ⟨fun value => do
+    let left ← SpecTecPrint.print? value.1
+    let right ← SpecTecPrint.print? value.2
+    return "(" ++ left ++ ", " ++ right ++ ")"⟩|lean}
+
 let print_reference (bound : string list) (reference : L.reference) : string =
   match reference with
   | Global name -> print_global_name bound name
   | Local name -> print_identifier name
+
+let rec print_instance (bound : string list) (typ : L.type_ref) : string =
+  let annotated (body : string) : string =
+    "({ print? := " ^ body ^ " } : _root_.SpecTecPrint "
+    ^ print_type bound typ ^ ")"
+  in
+  match typ with
+  | TypeParameter _ | BuiltinType (_, []) -> "_"
+  | BuiltinType ("List", [ element ]) ->
+      annotated
+        ("@_root_.specTecPrintList " ^ print_type bound element ^ " "
+        ^ print_instance bound element)
+  | BuiltinType ("Option", [ element ]) ->
+      annotated
+        ("@_root_.specTecPrintOption " ^ print_type bound element ^ " "
+        ^ print_instance bound element)
+  | TupleType elements ->
+      let bindings : string list =
+        List.mapi
+          (fun index element ->
+            "      let s" ^ string_of_int index
+            ^ " ← @_root_.SpecTecPrint.print? " ^ print_type bound element
+            ^ " " ^ print_instance bound element ^ " x" ^ string_of_int index)
+          elements
+      in
+      annotated
+        ("fun value => match value with\n"
+        ^ "    | " ^ tuple_pattern "x" elements ^ " => do\n"
+        ^ String.concat "\n" bindings ^ "\n"
+        ^ "      return \"(\" ++ \", \".intercalate ["
+        ^ String.concat ", "
+            (List.mapi (fun index _ -> "s" ^ string_of_int index) elements)
+        ^ "] ++ \")\"")
+  | RelationType _ -> annotated "fun _ => _root_.Option.none"
+  | Name name -> annotated (print_identifier ("print_" ^ name))
+  | Applied (name, arguments) ->
+      let parameters : string list =
+        List.map (print_type bound) arguments
+        @ List.map (print_instance bound) arguments
+      in
+      annotated
+        ("@" ^ print_identifier ("print_" ^ name) ^ " "
+        ^ String.concat " " parameters)
+  | BuiltinType _ -> "_"
 
 let rec print_term (bound : string list) (term : L.term) : string =
   let print : L.term -> string = print_term bound in
@@ -123,6 +265,7 @@ and print_application (bound : string list) (application : L.application) : stri
   let arguments : string list =
     List.map (print_type bound) application.type_arguments
     @ List.map (fun _ -> "_") application.instance_arguments
+    @ List.map (print_instance bound) application.print_instance_arguments
     @ List.map (print_term bound) application.arguments
   in
   match arguments with
@@ -182,13 +325,19 @@ let print_builtin (builtin : L.builtin) : string =
       (fun name -> "[_root_.DecidableEq " ^ print_identifier name ^ "]")
       builtin.equality_parameters
   in
+  let print_parameters : string list =
+    List.map
+      (fun name -> "[_root_.SpecTecPrint " ^ print_identifier name ^ "]")
+      builtin.print_parameters
+  in
   let parameters : string list =
     List.mapi
       (fun index typ ->
         "(arg" ^ string_of_int index ^ " : " ^ print_type [] typ ^ ")")
       builtin.parameters
   in
-  let binders : string list = type_parameters @ equality_parameters @ parameters in
+  let binders : string list =
+    type_parameters @ equality_parameters @ print_parameters @ parameters in
   let binders : string =
     match binders with [] -> "" | _ -> " " ^ String.concat " " binders
   in
@@ -249,8 +398,8 @@ let print_declaration ?(derive_decidable_eq = false)
                  "  (" ^ quoted ^ " : " ^ print_type bound typ ^ ")")
                fields))
   | Relation
-      { name; type_parameters; equality_parameters; argument_types; rules;
-        notation = _ } ->
+      { name; type_parameters; equality_parameters; print_parameters;
+        argument_types; rules; notation = _ } ->
       let signature : string =
         String.concat " → "
           (List.map (print_type type_parameters) argument_types @ [ "Prop" ])
@@ -262,7 +411,11 @@ let print_declaration ?(derive_decidable_eq = false)
              type_parameters
           @ List.map
               (fun name -> " [_root_.DecidableEq " ^ print_identifier name ^ "]")
-              equality_parameters)
+              equality_parameters
+          @ List.map
+              (fun name ->
+                " [_root_.SpecTecPrint " ^ print_identifier name ^ "]")
+              print_parameters)
       in
       let declaration : string =
         String.concat "\n"
@@ -331,7 +484,7 @@ let equality_call (shapes : L.equality_shape list) (typ : L.type_ref)
       print_identifier shape.equality_name ^ " " ^ left ^ " " ^ right
   | None -> "_root_.decEq " ^ left ^ " " ^ right
 
-let equality_result (shapes : L.equality_shape list)
+let equality_result ?(flat_tuple = false) (shapes : L.equality_shape list)
     (indent : string) (fields : L.type_ref list) : string =
   match fields with
   | [] -> "_root_.Decidable.isTrue rfl"
@@ -356,7 +509,10 @@ let equality_result (shapes : L.equality_shape list)
             ^ " with\n" ^ indent ^ "| _root_.Decidable.isTrue " ^ name ^ " =>\n"
             ^ indent ^ "  " ^ nested (index + 1) (indent ^ "  ") rest
             ^ "\n" ^ indent ^ "| _root_.Decidable.isFalse " ^ name
-            ^ " => _root_.Decidable.isFalse (by intro e; injection e; contradiction)"
+            ^ " => _root_.Decidable.isFalse "
+            ^ (if flat_tuple then
+                 "(by intro e; cases e; exact " ^ name ^ " rfl)"
+               else "(by intro e; injection e; contradiction)")
       in
       nested 0 indent fields
 
@@ -431,10 +587,11 @@ let print_option_equality (shapes : L.equality_shape list)
   ^ "\n  | _root_.Option.none, _root_.Option.some _ => _root_.Decidable.isFalse (by intro e; cases e)\n"
   ^ "  | _root_.Option.some _, _root_.Option.none => _root_.Decidable.isFalse (by intro e; cases e)"
 
-let print_pair_equality (shapes : L.equality_shape list)
-    (left : L.type_ref) (right : L.type_ref) : string =
-  "match a, b with\n  | (x0, x1), (y0, y1) =>\n    "
-  ^ equality_result shapes "    " [ left; right ]
+let print_tuple_equality (shapes : L.equality_shape list)
+    (elements : L.type_ref list) : string =
+  "match a, b with\n  | " ^ tuple_pattern "x" elements ^ ", "
+  ^ tuple_pattern "y" elements ^ " =>\n    "
+  ^ equality_result ~flat_tuple:true shapes "    " elements
 
 let print_equality_shape (equality : L.manual_equality)
     (shape : L.equality_shape) : string =
@@ -452,8 +609,8 @@ let print_equality_shape (equality : L.manual_equality)
         print_list_equality equality.equality_shapes element
     | EqualityOption element ->
         print_option_equality equality.equality_shapes element
-    | EqualityPair (left, right) ->
-        print_pair_equality equality.equality_shapes left right
+    | EqualityTuple elements ->
+        print_tuple_equality equality.equality_shapes elements
   in
   Printf.sprintf "def %s%s (a b : %s) : _root_.Decidable (a = b) :=\n  %s\ntermination_by structural a"
     (print_identifier shape.equality_name) parameters
@@ -476,6 +633,200 @@ let print_manual_equality (equality : L.manual_equality) : string =
         Printf.sprintf "instance%s : _root_.DecidableEq %s := %s" parameters
           (print_type bound typ) (print_identifier name))
       equality.equality_instances
+  in
+  String.concat "\n\n" (functions :: instances)
+
+let print_printer_parameters (parameters : string list) : string =
+  String.concat ""
+    (List.map
+       (fun parameter ->
+         " {" ^ print_identifier parameter ^ " : Type} [_root_.SpecTecPrint "
+         ^ print_identifier parameter ^ "]")
+       parameters)
+
+let rec contains_flat_tuple (typ : L.type_ref) : bool =
+  match typ with
+  | TupleType (_ :: _ :: _ :: _) -> true
+  | TupleType arguments | BuiltinType (_, arguments) | Applied (_, arguments) ->
+      List.exists contains_flat_tuple arguments
+  | RelationType (arguments, result) ->
+      List.exists contains_flat_tuple (result :: arguments)
+  | Name _ | TypeParameter _ -> false
+
+(* Instance search would print a flat tuple of three or more elements with
+   the binary product instance, which nests the parentheses. *)
+let printer_call (bound : string list) (shapes : L.print_shape list)
+    (typ : L.type_ref) (value : string) : string =
+  match
+    List.find_opt (fun (shape : L.print_shape) -> shape.print_type = typ) shapes
+  with
+  | Some shape -> print_identifier shape.print_name ^ " " ^ value
+  | None when contains_flat_tuple typ ->
+      "@_root_.SpecTecPrint.print? " ^ print_type bound typ ^ " "
+      ^ print_instance bound typ ^ " " ^ value
+  | None -> "_root_.SpecTecPrint.print? " ^ value
+
+let rec print_format (format : L.print_format) : string =
+  match format with
+  | PrintAbsent -> "_root_.Option.none"
+  | PrintLiteral value ->
+      "_root_.Option.some \"" ^ escape_string value ^ "\""
+  | PrintHole index -> "_root_.Option.some s" ^ string_of_int index
+  | PrintFilteredJoin parts ->
+      "_root_.specTecPrintFiltered ["
+      ^ String.concat ", " (List.map print_format parts) ^ "]"
+  | PrintSequence parts ->
+      "_root_.specTecPrintSequence ["
+      ^ String.concat ", " (List.map print_format parts) ^ "]"
+  | PrintFuse (left, right) ->
+      "_root_.specTecPrintFuse (" ^ print_format left ^ ") ("
+      ^ print_format right ^ ")"
+
+let print_do (bound : string list) (shapes : L.print_shape list)
+    (fields : (L.type_ref * string) list) (used : int list)
+    (result : string) : string =
+  let bindings : string list =
+    List.mapi
+      (fun index (typ, value) ->
+        if List.mem index used then
+          Some
+            ("      let s" ^ string_of_int index ^ " ← "
+            ^ printer_call bound shapes typ value)
+        else None)
+      fields
+    |> List.filter_map Fun.id
+  in
+  "do\n" ^ String.concat "\n" bindings ^
+  (if bindings = [] then "" else "\n") ^ "      return " ^ result
+
+let print_datatype_printer (bound : string list) (shapes : L.print_shape list)
+    (constructors : L.constructor list) : string =
+  match constructors with
+  | [] -> "nomatch value"
+  | _ ->
+      "match value with\n"
+      ^ String.concat "\n"
+          (List.map
+             (fun (constructor : L.constructor) ->
+               let fields : (L.type_ref * string) list =
+                 List.mapi
+                   (fun index typ -> typ, "x" ^ string_of_int index)
+                   constructor.arguments
+               in
+               "  | " ^ constructor_pattern constructor "x" ^ " => "
+               ^ print_do bound shapes fields
+                   (L.print_format_holes constructor.print_format)
+                   ("_root_.specTecPrintFinish ("
+                   ^ print_format constructor.print_format ^ ")"))
+             constructors)
+
+let print_list_printer (bound : string list) (shapes : L.print_shape list)
+    (typ : L.type_ref)
+    (element : L.type_ref) : string =
+  "match value with\n"
+  ^ "  | [] => _root_.Option.some \"\"\n"
+  ^ "  | head :: tail => do\n"
+  ^ "      let printedHead ← " ^ printer_call bound shapes element "head" ^ "\n"
+  ^ "      let printedTail ← " ^ printer_call bound shapes typ "tail" ^ "\n"
+  ^ "      return match tail with\n"
+  ^ "        | [] => printedHead\n"
+  ^ "        | _ => printedHead ++ \" \" ++ printedTail"
+
+let print_option_printer (bound : string list) (shapes : L.print_shape list)
+    (element : L.type_ref) : string =
+  "match value with\n"
+  ^ "  | _root_.Option.none => _root_.Option.some \"\"\n"
+  ^ "  | _root_.Option.some item => " ^ printer_call bound shapes element "item"
+
+let print_tuple_printer (bound : string list) (shapes : L.print_shape list)
+    (elements : L.type_ref list) : string =
+  let fields : (L.type_ref * string) list =
+    List.mapi (fun index typ -> typ, "x" ^ string_of_int index) elements
+  in
+  "match value with\n  | " ^ tuple_pattern "x" elements ^ " => "
+  ^ print_do bound shapes fields (List.init (List.length fields) Fun.id)
+      ("\"(\" ++ \", \".intercalate ["
+      ^ String.concat ", "
+          (List.mapi (fun index _ -> "s" ^ string_of_int index) elements)
+      ^ "] ++ \")\"")
+
+let print_shape_children (shape : L.print_shape) : L.type_ref list =
+  match shape.print_kind with
+  | PrintDatatype constructors ->
+      List.concat_map
+        (fun (constructor : L.constructor) ->
+          let used : int list =
+            L.print_format_holes constructor.print_format in
+          List.filteri
+            (fun index _ -> List.mem index used)
+            constructor.arguments)
+        constructors
+  | PrintList element -> [ shape.print_type; element ]
+  | PrintOption element -> [ element ]
+  | PrintTuple elements -> elements
+  | PrintStructure | PrintFailure -> []
+
+let recursive_print_shape (shapes : L.print_shape list)
+    (start : L.print_shape) : bool =
+  let rec reaches_start (seen : L.type_ref list) (shape : L.print_shape) : bool =
+    List.exists
+      (fun typ ->
+        if typ = start.print_type then true
+        else if List.mem typ seen then false
+        else
+          match
+            List.find_opt
+              (fun (candidate : L.print_shape) ->
+                candidate.print_type = typ)
+              shapes
+          with
+          | None -> false
+          | Some next -> reaches_start (typ :: seen) next)
+      (print_shape_children shape)
+  in
+  reaches_start [ start.print_type ] start
+
+let print_printer_shape (printer : L.manual_printer)
+    (shape : L.print_shape) : string =
+  let parameters : string =
+    print_printer_parameters printer.printer_type_parameters in
+  let bound : string list = printer.printer_type_parameters in
+  let body : string =
+    match shape.print_kind with
+    | PrintDatatype constructors ->
+        print_datatype_printer bound printer.printer_shapes constructors
+    | PrintStructure | PrintFailure -> "_root_.Option.none"
+    | PrintList element ->
+        print_list_printer bound printer.printer_shapes shape.print_type element
+    | PrintOption element ->
+        print_option_printer bound printer.printer_shapes element
+    | PrintTuple elements ->
+        print_tuple_printer bound printer.printer_shapes elements
+  in
+  Printf.sprintf
+    "def %s%s (value : %s) : _root_.Option _root_.String :=\n  %s%s"
+    (print_identifier shape.print_name) parameters
+    (print_type bound shape.print_type) body
+    (if recursive_print_shape printer.printer_shapes shape then
+       "\ntermination_by structural value"
+     else "")
+
+let print_manual_printer (printer : L.manual_printer) : string =
+  let functions : string =
+    "mutual\n\n"
+    ^ String.concat "\n\n"
+        (List.map (print_printer_shape printer) printer.printer_shapes)
+    ^ "\n\nend"
+  in
+  let parameters : string =
+    print_printer_parameters printer.printer_type_parameters in
+  let bound : string list = printer.printer_type_parameters in
+  let instances : string list =
+    List.map
+      (fun (typ, name) ->
+        Printf.sprintf "instance%s : _root_.SpecTecPrint %s := ⟨%s⟩"
+          parameters (print_type bound typ) (print_identifier name))
+      printer.printer_instances
   in
   String.concat "\n\n" (functions :: instances)
 
@@ -503,8 +854,10 @@ let rec print_group (group : L.declaration_group) : string =
         :: List.concat_map declaration_notation declarations)
   | DerivingDecidableEq group -> print_group group
   | ManualDecidableEq equality -> print_manual_equality equality
+  | ManualPrinter printer -> print_manual_printer printer
 
 let print (program : L.program) : string =
-  "set_option autoImplicit false\nset_option linter.unusedVariables false\n\nnamespace SpecTec\n\n"
+  "set_option autoImplicit false\nset_option linter.unusedVariables false\n\n"
+  ^ print_prelude ^ "\n\nnamespace SpecTec\n\n"
   ^ String.concat "\n\n" (List.map print_group program)
   ^ "\n\nend SpecTec"
