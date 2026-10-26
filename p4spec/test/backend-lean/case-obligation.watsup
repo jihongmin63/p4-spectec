@@ -1,0 +1,12 @@
+syntax p4program =
+  | _EMPTY
+  | p4program ';'
+
+syntax p4programIR = OK
+
+relation Program_ok:
+  |- p4program : p4programIR
+  hint(input %0)
+
+rule Program_ok/empty:
+  |- _EMPTY : OK

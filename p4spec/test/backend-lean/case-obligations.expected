@@ -1,0 +1,13 @@
+namespace SpecTec
+
+-- case_0: "./case-empty.p4"
+def case_0_input : p4program := (@p4program._EMPTY)
+def case_0_expected : p4programIR := (@p4programIR.OK)
+def case_0 : Prop := Program_ok case_0_input case_0_expected ∧
+  ∀ output : p4programIR, Program_ok case_0_input output → output = case_0_expected
+
+-- case_1: "./case-semicolon.p4"
+def case_1_input : p4program := (@p4program.«% ';'» (@p4program._EMPTY))
+def case_1 : Prop := ¬ (∃ output : p4programIR, Program_ok case_1_input output)
+
+end SpecTec

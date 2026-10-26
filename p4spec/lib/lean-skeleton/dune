@@ -10,10 +10,14 @@
   translator
   order
   printer
+  module_writer
   execution_support
   execution_ir
   execution_translate
   pipeline
+  case_manifest
+  case_value
+  case_obligation
   main)
  (libraries lang domain util pass diagnostic runtime p4 p4spectec interface unix))
 
