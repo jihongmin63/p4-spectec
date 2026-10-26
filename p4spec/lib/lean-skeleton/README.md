@@ -291,7 +291,7 @@ To attempt proofs for accepted corpus cases, smallest P4 source first:
 ELAN_TOOLCHAIN=leanprover/lean4:v4.34.1 python3 \
   p4spec/test/backend-lean/prove_positive_cases.py \
   --exe _build/default/p4spec/lib/lean-skeleton/main.exe \
-  --spec spec -I p4c/p4include --limit 10 \
+  --spec spec -I p4c/p4include --kernel-only --limit 10 \
   --output p4spec/test/backend-lean/generated/positive-first10 \
   --report p4spec/test/backend-lean/positive-first10.md
 ```
@@ -303,11 +303,16 @@ report paths must be new on each run. Generated Lean, command output, phase
 timings, input hashes and JSON results stay in the artifact directory; the
 separate Markdown document records the run as it progresses.
 
-Shared executable semantics are generated and compiled once per run. Each case
-uses native `runEval` to find the final supply, then proves
+Shared executable semantics are generated and checked once per run. Each case
+uses `runEval` to find the final supply, then proves
 `Program_ok input expected` with `runEval_sound` and kernel reduction (`rfl`).
 Only successful kernel checking and an axiom audit count as `proved`; native
-evaluation is diagnostic evidence. The target proves the exact recorded output
+evaluation is diagnostic evidence. `--kernel-only` wraps the generated semantics
+and data in a Lean `noncomputable section` and probes using `#reduce` instead
+of `#eval`; declarations and their bodies remain unchanged. Use it for the
+repository spec, whose `Call` constructors exceed the native runtime tag limit.
+Small specifications can omit it for faster native probes.
+The target proves the exact recorded output
 is accepted, not the additional uniqueness conjunct of the corpus proposition.
 No `sorry` or native-evaluation axiom is permitted in a successful proof.
 
@@ -316,6 +321,10 @@ fuel. `--fuel`, `--timeout` (120 seconds per case phase), `--setup-timeout`
 (900 seconds per shared setup phase), and `--heartbeats` control the bounds.
 Timeouts, unsupported choices, unmatch, abort and proof errors remain explicit
 in the report. A run exits nonzero if any selected case remains unproved.
+
+The initial repository run is recorded in
+[the ten-case kernel proof log](../../test/backend-lean/positive-kernel-proof-log.md),
+including the separate native compilation failure that motivated kernel mode.
 
 ## P4 type-checking proof obligations
 

@@ -58,30 +58,42 @@ class PositiveProofs(unittest.TestCase):
         self.assertEqual(json.loads((self.output / 'results.json').read_text()), report)
 
     def test_fuel_exhaustion_is_not_a_proof(self):
-        result, report = self.run_proofs([
-            f'accept\t{HERE / "case-empty.p4"}\t{HERE / "case-oracle.lean"}\n'],
-            '--fuel', '1')
-        self.assertEqual(result.returncode, 1)
-        self.assertEqual(report['cases'][0]['status'], 'outOfFuel')
-        self.assertEqual(report['proved'], 0)
+        for flags in ([], ['--kernel-only']):
+            with self.subTest(flags=flags):
+                self.output = self.root / ('kernel' if flags else 'native')
+                self.report = self.output.with_suffix('.md')
+                result, report = self.run_proofs([
+                    f'accept\t{HERE / "case-empty.p4"}\t{HERE / "case-oracle.lean"}\n'],
+                    '--fuel', '1', *flags)
+                self.assertEqual(result.returncode, 1)
+                self.assertEqual(report['cases'][0]['status'], 'outOfFuel')
+                self.assertEqual(report['proved'], 0)
 
     def test_success_with_wrong_oracle_is_not_a_proof(self):
         self.spec.write_text(self.spec.read_text().replace('p4programIR = OK', 'p4programIR = OK | BAD'))
         oracle = self.root / 'wrong.lean'
         oracle.write_text('p4programIR.BAD\n')
-        result, report = self.run_proofs([
-            f'accept\t{HERE / "case-empty.p4"}\t{oracle}\n'])
-        self.assertEqual(result.returncode, 1)
-        self.assertEqual(report['cases'][0]['status'], 'proof-error')
-        self.assertEqual(report['proved'], 0)
+        for flags in ([], ['--kernel-only']):
+            with self.subTest(flags=flags):
+                self.output = self.root / ('kernel' if flags else 'native')
+                self.report = self.output.with_suffix('.md')
+                result, report = self.run_proofs([
+                    f'accept\t{HERE / "case-empty.p4"}\t{oracle}\n'], *flags)
+                self.assertEqual(result.returncode, 1)
+                self.assertEqual(report['cases'][0]['status'], 'proof-error')
+                self.assertEqual(report['proved'], 0)
 
     def test_external_choice_is_explicitly_unsupported(self):
         self.spec.write_text(self.spec.read_text().split('rule Program_ok/empty:')[0]
                             .replace('relation Program_ok:', 'extern relation Program_ok:'))
-        result, report = self.run_proofs([
-            f'accept\t{HERE / "case-empty.p4"}\t{HERE / "case-oracle.lean"}\n'])
-        self.assertEqual(result.returncode, 1)
-        self.assertEqual(report['cases'][0]['status'], 'unsupportedChoice')
+        for flags in ([], ['--kernel-only']):
+            with self.subTest(flags=flags):
+                self.output = self.root / ('kernel' if flags else 'native')
+                self.report = self.output.with_suffix('.md')
+                result, report = self.run_proofs([
+                    f'accept\t{HERE / "case-empty.p4"}\t{HERE / "case-oracle.lean"}\n'], *flags)
+                self.assertEqual(result.returncode, 1)
+                self.assertEqual(report['cases'][0]['status'], 'unsupportedChoice')
 
     def test_case_ids_never_rewrite_oracle_string_literals(self):
         self.spec.write_text(self.spec.read_text().replace('p4programIR = OK',
@@ -103,6 +115,15 @@ class PositiveProofs(unittest.TestCase):
         self.assertIsNone(phase['returncode'])
         time.sleep(0.5)
         self.assertFalse(marker.exists(), 'timed-out descendant continued running')
+
+    def test_kernel_mode_proves_beyond_native_constructor_limit(self):
+        self.spec.write_text(self.spec.read_text() + ''.join(
+            f'\ndec $padding{i}() : nat\ndef $padding{i}() = 0\n' for i in range(260)))
+        result, report = self.run_proofs([
+            f'accept\t{HERE / "case-empty.p4"}\t{HERE / "case-oracle.lean"}\n'],
+            '--kernel-only')
+        self.assertEqual(result.returncode, 0, json.dumps(report, indent=2))
+        self.assertEqual(report['cases'][0]['status'], 'proved')
 
 
 if __name__ == '__main__':

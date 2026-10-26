@@ -53,7 +53,8 @@ def save_report(output, path, report):
              f"Commit: `{report['commit']}`. Lean: `{report['lean_version']}`.", '',
              'Target: `Program_ok input expected`, with the exact recorded oracle and initial fresh supply 0.',
              'This proves acceptance only; the corpus proposition also asks for uniqueness, which this runner does not prove.',
-             'Native evaluation selects fuel and final supply. Only a kernel-checked `runEval_sound … rfl` theorem counts as proved.', '',
+             f"Probe mode: {'kernel reduction' if report.get('kernel_only') else 'native evaluation'}. "
+             'Only a kernel-checked `runEval_sound … rfl` theorem counts as proved.', '',
              f"Order: source bytes, then path. Selected: {len(report['cases'])}/{report['total_positive']}. "
              f"Proved: **{report['proved']}**.", '',
              'Command:', '', '```sh', report['command'], '```', '',
@@ -69,11 +70,12 @@ def save_report(output, path, report):
         lines.append(f"| {row['case_id']} | {row['bytes']} | `{source}` | {row['status']} | "
                      f"{row.get('fuel', '')} | {row.get('seconds', 0):.2f} |")
     if report.get('error'):
-        lines += ['', 'Setup/run error:', '', '```text', report['error'], '```']
+        lines += ['', 'Setup/run error (full output is in the artifact directory):', '',
+                  '```text', report['error'][:4000], '```']
     for row in report['cases']:
         if row.get('error') or row.get('axioms'):
             lines += ['', f"Case {row['case_id']} ({row['status']}):", '', '```text',
-                      row.get('error', row.get('axioms', '')), '```']
+                      row.get('error', row.get('axioms', ''))[:2000], '```']
     replace_text(path, '\n'.join(lines) + '\n')
 
 
@@ -131,19 +133,31 @@ def prove_case(row, args, output):
         f'Case{index:04d}Export', args.timeout)
     require_success(phase, data, error)
     source = output / f'{module}.lean'
-    source.write_text('import Semantics\nset_option maxRecDepth 16384\n' + data)
+    source.write_text('import Semantics\nset_option maxRecDepth 16384\n'
+                      + ('noncomputable section\n' if args.kernel_only else '') + data)
     require_success(*lean_phase(source, output, args.timeout))
     for fuel in args.fuel:
         row['fuel'] = fuel
         probe = output / f'Case{index:04d}Probe{fuel}.lean'
-        probe.write_text(f'''import {module}
-open SpecTec SpecTecExecution
-#eval match runEval specTecExecutableProgram {fuel} (.call (Call.Program_ok {name}_input)) 0 with
+        branches = '''
+  | .done (.success _) supply => (0, supply)
+  | .done .unmatch _ => (1, 0)
+  | .done (.abort _) _ => (2, 0)
+  | .outOfFuel => (3, 0)
+  | .unsupportedChoice => (4, 0)
+''' if args.kernel_only else '''
   | .done (.success _) supply => "RESULT success " ++ toString supply
   | .done .unmatch _ => "RESULT unmatch"
   | .done (.abort message) _ => "RESULT abort " ++ message
   | .outOfFuel => "RESULT outOfFuel"
   | .unsupportedChoice => "RESULT unsupportedChoice"
+'''
+        probe.write_text(f'''import {module}
+set_option maxRecDepth 16384
+set_option maxHeartbeats {args.heartbeats}
+open SpecTec SpecTecExecution
+{'#reduce' if args.kernel_only else '#eval'} match runEval specTecExecutableProgram {fuel} (.call (Call.Program_ok {name}_input)) 0 with
+{branches}
 ''')
         phase, stdout, stderr = lean_phase(probe, output, args.timeout)
         row['attempts'].append(dict(fuel=fuel, **phase))
@@ -151,16 +165,19 @@ open SpecTec SpecTecExecution
             row.update(status='timeout' if phase['returncode'] is None else 'evaluation-error',
                        error=stdout + stderr)
             return
-        match = re.search(r'^"RESULT (success (\d+)|outOfFuel|unsupportedChoice|unmatch|abort.*)"$', stdout, re.M)
+        match = (re.fullmatch(r'\s*\(([0-4]),\s*(\d+)\)\s*', stdout)
+                 if args.kernel_only else re.search(
+                     r'^"RESULT (success (\d+)|outOfFuel|unsupportedChoice|unmatch|abort.*)"$', stdout, re.M))
         if not match:
             row.update(status='evaluation-error', error=stdout + stderr)
             return
-        status = match[1].split()[0]
+        status = (['success', 'unmatch', 'abort', 'outOfFuel', 'unsupportedChoice'][int(match[1])]
+                  if args.kernel_only else match[1].split()[0])
         if status != 'success':
             row['status'] = status
             if status == 'outOfFuel':
                 continue
-            if status == 'abort':
+            if status == 'abort' and not args.kernel_only:
                 row['error'] = match[1]
             return
         supply = int(match[2])
@@ -205,6 +222,8 @@ def main():
     parser.add_argument('--timeout', type=float, default=120, help='seconds per case phase')
     parser.add_argument('--setup-timeout', type=float, default=900)
     parser.add_argument('--heartbeats', type=int, default=4000000)
+    parser.add_argument('--kernel-only', action='store_true',
+                        help='allow noncomputable semantics and probe with kernel reduction')
     args = parser.parse_args()
     if args.limit < 0 or args.offset < 0 or min(args.fuel) < 1 or min(args.timeout, args.setup_timeout, args.heartbeats) <= 0:
         parser.error('limits must be positive (limit and offset may be zero)')
@@ -219,7 +238,7 @@ def main():
     report = dict(started=datetime.now(timezone.utc).isoformat(), status='running',
                   command=shlex.join([sys.executable, *sys.argv]), commit='unknown',
                   lean_version='unknown', total_positive=0, cases=[], proved=0,
-                  runner_sha256=digest(Path(__file__)))
+                  runner_sha256=digest(Path(__file__)), kernel_only=args.kernel_only)
     if os.environ.get('ELAN_TOOLCHAIN'):
         report['command'] = 'ELAN_TOOLCHAIN=' + shlex.quote(os.environ['ELAN_TOOLCHAIN']) + ' ' + report['command']
     try:
@@ -238,7 +257,7 @@ def main():
                                             output, 'translation', args.setup_timeout)
         require_success(phase, semantics, error)
         source = output / 'Semantics.lean'
-        source.write_text(semantics)
+        source.write_text(('noncomputable section\n' if args.kernel_only else '') + semantics)
         report['semantics_sha256'] = digest(source)
         require_success(*lean_phase(source, output, args.setup_timeout))
         for row in report['cases']:
