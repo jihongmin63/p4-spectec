@@ -17,6 +17,13 @@
  (libraries builtin runtime util domain lang bignum.bigint))
 
 (rule
+ (alias backend-lean)
+ (deps check_case_corpus.py verify_case_corpus.py case-obligation.watsup case-empty.p4
+   case-semicolon.p4 case-oracle.lean)
+ (action (run python3 %{dep:check_case_corpus.py}
+   --exe %{exe:../../lib/lean-skeleton/main.exe})))
+
+(rule
  (target extern-direct.lean)
  (deps extern-model.watsup extern-direct-proof.lean)
  (action

@@ -12,6 +12,7 @@ type options = {
   batch_cases : string option;
   case_range : (int * int) option;
   emit_modules : string option;
+  emit_cases : string option;
   module_split_bytes : int option;
 }
 
@@ -19,7 +20,7 @@ let usage =
   "Usage: lean-skeleton [--relation-semantics ordered|declarative] [--keep-going] [--obligations-only] \
    [--case P4 EXPECTED | --reject-case P4 | --manifest TSV]... \
    [--case-range START COUNT] \
-   [--emit-modules DIR] [--module-split-bytes N] \
+   [--emit-modules DIR | --emit-cases DIR] [--module-split-bytes N] \
    [--dump-output P4 | --check-rejection P4 | --batch-cases PATHS] \
    [-I DIR]... <spec-path>..."
 
@@ -40,6 +41,8 @@ let parse_options arguments =
         loop { options with obligations_only = true } rest
     | "--emit-modules" :: directory :: rest when directory <> "" ->
         loop { options with emit_modules = Some directory } rest
+    | "--emit-cases" :: directory :: rest when directory <> "" ->
+        loop { options with emit_cases = Some directory } rest
     | "--module-split-bytes" :: bytes :: rest ->
         (match int_of_string_opt bytes with
         | Some bytes when bytes > 0 ->
@@ -69,7 +72,7 @@ let parse_options arguments =
         loop { options with includes_p4 = path :: options.includes_p4 } rest
     | ("--case" | "--reject-case" | "--manifest" | "--dump-output" |
        "--check-rejection" | "--batch-cases" | "--case-range" |
-       "--emit-modules" | "--module-split-bytes" | "-I") :: [] -> Error usage
+       "--emit-modules" | "--emit-cases" | "--module-split-bytes" | "-I") :: [] -> Error usage
     | argument :: _ when String.starts_with ~prefix:"-" argument ->
         Error ("Unknown option: " ^ argument ^ "\n" ^ usage)
     | path :: rest ->
@@ -78,7 +81,7 @@ let parse_options arguments =
   loop { paths_spec = []; includes_p4 = []; cases = [];
          ordered = true; keep_going = false; obligations_only = false; dump_output = None;
          check_rejection = None; batch_cases = None; case_range = None;
-         emit_modules = None; module_split_bytes = None } arguments
+         emit_modules = None; emit_cases = None; module_split_bytes = None } arguments
 
 let parse_case includes_p4 (expectation, source, expected_path) =
   let* value =
@@ -208,6 +211,11 @@ let () =
      (options.obligations_only && options.cases = []) then (
     prerr_endline usage;
     exit 2);
+  if options.emit_cases <> None &&
+     (options.cases = [] || not options.ordered || options.keep_going ||
+      options.obligations_only || options.emit_modules <> None) then (
+    prerr_endline "--emit-cases requires cases and complete ordered semantics; it cannot combine with --emit-modules or --obligations-only";
+    exit 2);
   if options.keep_going && options.cases <> [] && not options.obligations_only then (
     prerr_endline
       "--keep-going cannot emit case propositions; use --obligations-only";
@@ -215,7 +223,7 @@ let () =
   if options.emit_modules <> None && options.obligations_only then (
     prerr_endline "--emit-modules requires translated semantics";
     exit 2);
-  if options.module_split_bytes <> None && options.emit_modules = None then (
+  if options.module_split_bytes <> None && options.emit_modules = None && options.emit_cases = None then (
     prerr_endline "--module-split-bytes requires --emit-modules or --emit-cases";
     exit 2);
   if options.case_range <> None && options.cases = [] then (
@@ -229,7 +237,7 @@ let () =
   if (options.dump_output <> None || options.check_rejection <> None ||
       options.batch_cases <> None) &&
      (options.cases <> [] || options.obligations_only || options.keep_going ||
-      options.emit_modules <> None || options.module_split_bytes <> None ||
+      options.emit_modules <> None || options.emit_cases <> None || options.module_split_bytes <> None ||
       options.case_range <> None ||
       List.length (List.filter Option.is_some
         [options.dump_output; options.check_rejection; options.batch_cases]) > 1) then (
@@ -252,7 +260,24 @@ let () =
               options.includes_p4 path in
             Ok (result, [])
         | None, None, None ->
-        (
+        if options.emit_cases <> None then (
+          let* semantics = Pipeline.transpile ~ordered:true spec_il in
+          let entries = Case_manifest.select options.case_range options.cases in
+          try
+            Case_export.emit ?module_split_bytes:options.module_split_bytes
+              ~directory:(Option.get options.emit_cases) ~spec:spec_il ~semantics
+              ~entries ~load:(fun entry -> match parse_case options.includes_p4 entry with
+                | Ok case -> case | Error diagnostic -> raise (Translator.Unsupported_il diagnostic)) ();
+            Ok (Printf.sprintf "Exported %d case propositions to %s" (List.length entries)
+              (Option.get options.emit_cases), [])
+          with
+          | Translator.Unsupported_il diagnostic -> Error diagnostic
+          | Sys_error message | Invalid_argument message ->
+              Error (Diagnostic.error ~source:"cases" Util.Source.no_region message)
+          | Unix.Unix_error (error, _, path) ->
+              Error (Diagnostic.error ~source:"cases" Util.Source.no_region
+                (path ^ ": " ^ Unix.error_message error)))
+        else (
         let selected, start = match options.case_range with
           | None -> options.cases, 0
           | Some (start, count) ->

@@ -18,6 +18,7 @@
   case_manifest
   case_value
   case_obligation
+  case_export
   main)
  (libraries lang domain util pass diagnostic runtime p4 p4spectec interface unix))
 
