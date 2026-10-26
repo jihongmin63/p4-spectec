@@ -6,3 +6,6 @@ expressions, `order.ml` validates dependency groups, and `printer.ml` emits code
 The shared ordered execution contract lives in `lean/SpecTecExecution.lean`.
 
 Build with the project opam environment and Dune. Lean checks use Lean 4.34.1.
+
+Run `dune exec p4spec/lib/lean-skeleton/main.exe -- <spec-path>`.
+Use `--keep-going` to report unsupported declarations and retain independent ones.

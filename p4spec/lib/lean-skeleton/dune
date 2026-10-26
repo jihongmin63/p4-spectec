@@ -1,4 +1,4 @@
-(library
- (name lean_skeleton)
- (modules ast builtin identifier order printer translator traversal)
+(executable
+ (name main)
+ (modules ast builtin identifier main order pipeline printer translator traversal)
  (libraries lang domain util pass diagnostic))
