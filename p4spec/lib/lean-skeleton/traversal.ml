@@ -10,6 +10,11 @@ let rec map_term_types (map : L.type_ref -> L.type_ref) (term : L.term) : L.term
         ({ reference with type_arguments = List.map map reference.type_arguments },
          List.map recurse arguments)
   | Apply application -> L.Apply (map_application_types map application)
+  | Coerce (name, source, target, value) ->
+      L.Coerce (name, map source, map target, recurse value)
+  | MembershipTest (name, source, target, cases, exhaustive, value) ->
+      L.MembershipTest (name, map source, map target, cases, exhaustive, recurse value)
+  | Lambda (name, typ, body) -> L.Lambda (name, map typ, recurse body)
   | Native (name, arguments) -> L.Native (name, List.map recurse arguments)
   | Unary (operator, value) -> L.Unary (operator, recurse value)
   | Binary (operator, left, right) -> L.Binary (operator, recurse left, recurse right)
@@ -30,6 +35,7 @@ and map_prop_types (map : L.type_ref -> L.type_ref) (prop : L.prop) : L.prop =
   | Membership (element, collection) ->
       L.Membership (map_term_types map element, map_term_types map collection)
   | IsTrue term -> L.IsTrue (map_term_types map term)
+  | Predicate term -> L.Predicate (map_term_types map term)
   | Not prop -> L.Not (map_prop_types map prop)
   | And (left, right) -> L.And (map_prop_types map left, map_prop_types map right)
   | Or (left, right) -> L.Or (map_prop_types map left, map_prop_types map right)
@@ -55,6 +61,7 @@ let rec prop_terms (prop : L.prop) : L.term list =
   match prop with
   | Comparison (_, left, right) | Membership (left, right) -> [ left; right ]
   | IsTrue term -> [ term ]
+  | Predicate term -> [ term ]
   | Not prop -> prop_terms prop
   | And (left, right) | Or (left, right) | Implies (left, right) | Iff (left, right) ->
       prop_terms left @ prop_terms right
@@ -63,6 +70,8 @@ let term_children (term : L.term) : L.term list =
   match term with
   | Constructor (_, arguments) | Native (_, arguments) | ListLiteral arguments -> arguments
   | Apply application -> application.arguments
+  | Coerce (_, _, _, value) | Lambda (_, _, value)
+  | MembershipTest (_, _, _, _, _, value) -> [ value ]
   | Unary (_, value) | Typed (value, _) | Projection (_, _, value) -> [ value ]
   | Binary (_, left, right) | Tuple (left, right) | Index (left, right) -> [ left; right ]
   | StructureLiteral (_, fields) -> List.map snd fields
