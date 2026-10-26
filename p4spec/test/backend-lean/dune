@@ -301,6 +301,23 @@
  (action (run lean case-compressed.lean)))
 
 (rule
+ (target case-oracle-check.actual)
+ (deps case-manifest.tsv case-oracle.lean case-empty.p4 case-semicolon.p4
+  case-obligation.watsup verify_oracles.py)
+ (action
+  (with-stdout-to case-oracle-check.actual
+   (run python3 %{dep:verify_oracles.py}
+    --exe %{exe:../../lib/lean-skeleton/main.exe}
+    --manifest %{dep:case-manifest.tsv}
+    --spec %{dep:case-obligation.watsup}
+    --include ../../../p4c/p4include))))
+
+(rule
+ (alias backend-lean)
+ (deps case-oracle-check.actual)
+ (action (diff case-oracle-check.expected case-oracle-check.actual)))
+
+(rule
  (target micro-types-oracle.actual)
  (deps
   (source_tree ../../../spec)
