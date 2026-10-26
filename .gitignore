@@ -19,6 +19,12 @@ scripts/__pycache__
 log
 debug
 
+# Local Lean outputs and proof experiments
+/p4spec/test/backend-lean/generated/
+/p4spec/test/backend-lean/experiments/
+/.superpowers/
+/docs/superpowers/
+
 # MacOS
 *.DS_Store
 

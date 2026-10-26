@@ -1,0 +1,4 @@
+(library
+ (name lean_skeleton)
+ (modules ast builtin identifier translator traversal)
+ (libraries lang domain util pass diagnostic))
