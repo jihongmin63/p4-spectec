@@ -15,6 +15,7 @@ type options = {
   emit_modules : string option;
   emit_cases : string option;
   module_split_bytes : int option;
+  interpreter : Runtime.Sim.Signature.mode;
 }
 
 let usage =
@@ -22,7 +23,7 @@ let usage =
    [--case P4 EXPECTED | --reject-case P4 | --manifest TSV]... \
    [--case-range START COUNT] \
    [--emit-modules DIR | --emit-cases DIR] [--module-split-bytes N] \
-   [--dump-output P4 | --check-rejection P4 | --batch-cases PATHS] \
+   [--dump-output P4 | --check-rejection P4 | --batch-cases PATHS] [--interpreter sl|al] \
    [-I DIR]... <spec-path>..."
 
 let read_manifest = Case_manifest.read
@@ -62,6 +63,10 @@ let parse_options arguments =
         loop { options with check_rejection = Some path } rest
     | "--batch-cases" :: path :: rest ->
         loop { options with batch_cases = Some path } rest
+    | "--interpreter" :: mode :: rest when mode = "sl" || mode = "al" ->
+        loop { options with interpreter =
+          if mode = "al" then Runtime.Sim.Signature.AL_mode else Runtime.Sim.Signature.SL_mode } rest
+    | "--interpreter" :: _ -> Error "--interpreter requires sl or al"
     | "--case-range" :: start :: count :: rest ->
         (match int_of_string_opt start, int_of_string_opt count with
         | Some start, Some count when start >= 0 && count > 0 ->
@@ -83,7 +88,8 @@ let parse_options arguments =
   loop { paths_spec = []; includes_p4 = []; cases = [];
          ordered = true; executable = false; keep_going = false; obligations_only = false; dump_output = None;
          check_rejection = None; batch_cases = None; case_range = None;
-         emit_modules = None; emit_cases = None; module_split_bytes = None } arguments
+         emit_modules = None; emit_cases = None; module_split_bytes = None;
+         interpreter = Runtime.Sim.Signature.SL_mode } arguments
 
 let parse_case includes_p4 (expectation, source, expected_path) =
   let* value =
@@ -105,23 +111,23 @@ let rec parse_cases includes_p4 = function
       let* others = parse_cases includes_p4 rest in
       Ok (case :: others)
 
-let run_program paths_spec includes_p4 path =
+let run_program interpreter paths_spec includes_p4 path =
   let open Runtime.Sim.Signature in
   let diagnostic message =
     Diagnostic.error ~source:"oracle" Util.Source.no_region message in
   let lift = function
     | Ok value -> Ok value
     | Error error -> Error (diagnostic (P4spectec.Error.to_string error)) in
-  let* spec_sim = lift (P4spectec.spec_of_mode SL_mode paths_spec) in
+  let* spec_sim = lift (P4spectec.spec_of_mode interpreter paths_spec) in
   let* simulator = lift (P4spectec.build_sim ~det:true spec_sim) in
   let (module Simulator : SIM) = simulator in
   Ok (Simulator.Interp.eval_program "Program_ok" includes_p4 path)
 
-let oracle_output paths_spec spec_il includes_p4 path =
+let oracle_output interpreter paths_spec spec_il includes_p4 path =
   let open Runtime.Sim.Signature in
   let diagnostic message =
     Diagnostic.error ~source:"oracle" Util.Source.no_region message in
-  let* outcome = run_program paths_spec includes_p4 path in
+  let* outcome = run_program interpreter paths_spec includes_p4 path in
   match outcome with
   | Pass [ value ] ->
       (try
@@ -136,9 +142,9 @@ let oracle_output paths_spec spec_il includes_p4 path =
   | Fail (`Syntax diagnostic) -> Error diagnostic
   | Fail (`Runtime failure) -> Error (diagnostic_of_failure failure)
 
-let check_rejection paths_spec includes_p4 path =
+let check_rejection interpreter paths_spec includes_p4 path =
   let open Runtime.Sim.Signature in
-  let* outcome = run_program paths_spec includes_p4 path in
+  let* outcome = run_program interpreter paths_spec includes_p4 path in
   match outcome with
   | Fail (`Runtime (Unmatch _)) -> Ok "rejected"
   | Pass _ ->
@@ -161,7 +167,7 @@ let read_batch_paths path =
   with Sys_error message ->
     Error (Diagnostic.error ~source:"oracle" Util.Source.no_region message)
 
-let scan_batch paths_spec spec_il includes_p4 list_path =
+let scan_batch interpreter paths_spec spec_il includes_p4 list_path =
   let open Runtime.Sim.Signature in
   let diagnostic message =
     Diagnostic.error ~source:"oracle" Util.Source.no_region message in
@@ -169,7 +175,7 @@ let scan_batch paths_spec spec_il includes_p4 list_path =
     | Ok value -> Ok value
     | Error error -> Error (diagnostic (P4spectec.Error.to_string error)) in
   let* paths = read_batch_paths list_path in
-  let* spec_sim = lift (P4spectec.spec_of_mode SL_mode paths_spec) in
+  let* spec_sim = lift (P4spectec.spec_of_mode interpreter paths_spec) in
   let* simulator = lift (P4spectec.build_sim ~det:true spec_sim) in
   let (module Simulator : SIM) = simulator in
   let env = Translator.build_env spec_il in
@@ -250,20 +256,24 @@ let () =
         [options.dump_output; options.check_rejection; options.batch_cases]) > 1) then (
     prerr_endline "oracle checks cannot be combined with cases or translation options";
     exit 2);
+  if options.interpreter <> Runtime.Sim.Signature.SL_mode &&
+     options.dump_output = None && options.check_rejection = None && options.batch_cases = None then (
+    prerr_endline "--interpreter requires --dump-output, --check-rejection or --batch-cases";
+    exit 2);
   let result, collected_report =
     Diagnostic.collect (fun () ->
         let* spec_il = Pass.elab options.paths_spec in
         match options.dump_output, options.check_rejection, options.batch_cases with
         | None, None, Some path ->
-            let* () = scan_batch options.paths_spec spec_il
+            let* () = scan_batch options.interpreter options.paths_spec spec_il
               options.includes_p4 path in
             Ok ("", [])
         | Some path, None, None ->
-            let* output = oracle_output options.paths_spec spec_il
+            let* output = oracle_output options.interpreter options.paths_spec spec_il
               options.includes_p4 path in
             Ok (output, [])
         | None, Some path, None ->
-            let* result = check_rejection options.paths_spec
+            let* result = check_rejection options.interpreter options.paths_spec
               options.includes_p4 path in
             Ok (result, [])
         | None, None, None ->

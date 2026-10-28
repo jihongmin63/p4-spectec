@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Re-evaluate fixed Lean answers and rejection claims with the SpecTec SL interpreter."""
+"""Re-evaluate fixed Lean answers and rejection claims with a SpecTec interpreter (SL by default)."""
 
 import argparse
 from collections import Counter
@@ -72,6 +72,7 @@ def main() -> int:
     parser.add_argument("--root", type=Path, default=Path(__file__).resolve().parents[3])
     parser.add_argument("--spec", type=Path, required=True)
     parser.add_argument("--include", type=Path, required=True)
+    parser.add_argument("--interpreter", choices=("sl", "al"), default="sl")
     args = parser.parse_args()
 
     try:
@@ -99,7 +100,8 @@ def main() -> int:
             error_path = temporary / "errors.log"
             input_path.write_text("".join(str(source) + "\n" for _, source, _, _ in entries))
             command = [
-                str(args.exe.resolve()), "--batch-cases", str(input_path),
+                str(args.exe.resolve()), "--interpreter", args.interpreter,
+                "--batch-cases", str(input_path),
                 "-I", str(args.include.resolve()), str(args.spec.resolve()),
             ]
             with result_path.open("wb") as output, error_path.open("wb") as errors:

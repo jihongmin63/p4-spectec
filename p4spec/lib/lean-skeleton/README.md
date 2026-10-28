@@ -459,6 +459,26 @@ list with `discover_typecheck.py --paths`, run the executable with
 `capture_typecheck.py --scan SCAN`. This overwrites the answer files, audit,
 and manifest; review the changed outcomes before accepting them.
 
+`capture_typecheck.py --exe EXE` runs the scan itself, split over `--jobs`
+parallel `--batch-cases` processes (8 by default) and merged in path order, and
+writes it to `--scan`. `--interpreter al` selects the AL interpreter, whose
+clause-at-a-time fresh numbering matches `runEval`. `--oracles`, `--manifest` and
+`--audit` redirect the outputs. The AL corpus is captured with:
+
+```sh
+python3 p4spec/test/backend-lean/capture_typecheck.py \
+  --exe _build/default/p4spec/lib/lean-skeleton/main.exe --interpreter al --jobs 16 \
+  --scan p4spec/test/backend-lean/generated/typecheck-scan-al.tsv \
+  --oracles p4spec/test/backend-lean/oracles/al \
+  --manifest p4spec/test/backend-lean/typecheck-cases-al.tsv \
+  --audit p4spec/test/backend-lean/typecheck-audit-al.tsv
+```
+
+It has the same 1,948 outcomes and diagnostics as the SL corpus; 702 of the
+1,334 accepted answers differ, all only in `FRESH__n` numbering. Pass
+`--interpreter al` to `verify_oracles.py`, `--dump-output` or `--check-rejection`
+to check them against the AL interpreter.
+
 Use `--case FILE EXPECTED` and `--reject-case FILE` for individual inputs.
 `--dump-output FILE` prints the deterministic SL interpreter's `Program_ok`
 output as a Lean term, for creating or auditing an answer file.
