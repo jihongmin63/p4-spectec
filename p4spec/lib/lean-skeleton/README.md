@@ -291,17 +291,23 @@ To attempt proofs for accepted corpus cases, smallest P4 source first:
 ELAN_TOOLCHAIN=leanprover/lean4:v4.34.1 python3 \
   p4spec/test/backend-lean/prove_positive_cases.py \
   --exe _build/default/p4spec/lib/lean-skeleton/main.exe \
-  --spec spec -I p4c/p4include --kernel-only --limit 10 \
-  --output p4spec/test/backend-lean/generated/positive-first10 \
-  --report p4spec/test/backend-lean/positive-first10.md
+  --spec spec -I p4c/p4include --kernel-only --case-timeout 1800 \
+  --manifest p4spec/test/backend-lean/typecheck-cases-al.tsv \
+  --output p4spec/test/backend-lean/generated/positive-all \
+  --report p4spec/test/backend-lean/positive-progress.md
 ```
 
-The runner selects `accept` entries from `typecheck-cases.tsv`, retaining their
-original IDs, and sorts by source bytes then path. `--offset 10 --limit 10`
-selects the next batch; `--limit 0` selects all remaining positives. Output and
+The runner selects `accept` entries from `--manifest` (default
+`typecheck-cases.tsv`), retaining their
+original IDs, and sorts by source bytes then path. By default it attempts all
+positives; `--limit 10` selects the smallest ten, and `--offset 10 --limit 10`
+selects the next batch. Output and
 report paths must be new on each run. Generated Lean, command output, phase
 timings, input hashes and JSON results stay in the artifact directory; the
-separate Markdown document records the run as it progresses.
+separate Markdown document and console show only case identifiers, elapsed
+seconds and PASS/FAIL. The active case shows a dash; pending cases are omitted.
+The total includes shared
+setup; diagnostic details remain in the artifact directory.
 
 Shared executable semantics are generated and checked once per run. Each case
 uses `runEval` to find the final supply, then proves
@@ -317,14 +323,32 @@ is accepted, not the additional uniqueness conjunct of the corpus proposition.
 No `sorry` or native-evaluation axiom is permitted in a successful proof.
 
 Default fuel attempts are 128, 512 and 2048; only `outOfFuel` retries with more
-fuel. `--fuel`, `--timeout` (120 seconds per case phase), `--setup-timeout`
-(900 seconds per shared setup phase), and `--heartbeats` control the bounds.
-Timeouts, unsupported choices, unmatch, abort and proof errors remain explicit
-in the report. A run exits nonzero if any selected case remains unproved.
+fuel. `--case-timeout` defaults to 1800 seconds for each case, including data
+preparation, all fuel attempts and proof checking. Shared setup runs once outside
+this budget. Each new case gets a fresh budget; a timeout stops that case's process
+group, saves its failure and continues with the next case. There is no whole-run
+time limit. `--timeout` optionally imposes a tighter per-phase limit;
+`--setup-timeout` (900 seconds per shared setup phase), `--fuel` and `--heartbeats`
+control the other bounds.
 
-The initial repository run is recorded in
-[the ten-case kernel proof log](../../test/backend-lean/positive-kernel-proof-log.md),
-including the separate native compilation failure that motivated kernel mode.
+Use `--semantics-from PREVIOUS_OUTPUT` to reuse already checked shared semantics.
+The runner regenerates the source to verify it matches and checks the Lean version,
+source hash and compiled-module hash before copying the common module. Case proofs
+are always run again. Each run records these hashes in `results.json`.
+Use `--skip-proved-from PREVIOUS_OUTPUT` to omit cases that run proved for the
+same source and oracle hashes.
+Timeouts, unsupported choices, unmatch, abort and proof errors remain explicit
+in `results.json`. A run exits nonzero if any selected case remains unproved.
+
+Proof files set `smartUnfolding false`. With smart unfolding, elaborating `rfl`
+rebuilds `runEval`'s continuation terms at every step and can exhaust memory on
+cases whose `#reduce` probe (which already disables it) finishes in seconds.
+
+`runEval` tries clauses one at a time and keeps fresh supply consumed by a failed
+clause, like the AL interpreter. The SL interpreter shares premise prefixes
+between clauses, so clauses that allocate fresh identifiers before failing can
+number them differently. Prove against AL answers (`--manifest
+p4spec/test/backend-lean/typecheck-cases-al.tsv`, see below).
 
 ## P4 type-checking proof obligations
 

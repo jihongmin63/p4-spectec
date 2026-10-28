@@ -4,11 +4,13 @@ import argparse
 from datetime import datetime, timezone
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import re
 import shlex
 import signal
+import shutil
 import subprocess
 import sys
 import time
@@ -16,8 +18,26 @@ import time
 HERE = Path(__file__).resolve().parent
 
 
+class CaseTimeout(TimeoutError):
+    pass
+
+
+def expire_case(_signal, _frame):
+    raise CaseTimeout('case time limit reached')
+
+
+def success(status):
+    if status in ('pending', 'running', 'not-run'):
+        return '—'
+    return 'PASS' if status == 'proved' else 'FAIL'
+
+
 def digest(path):
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+    hasher = hashlib.sha256()
+    with path.open('rb') as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b''):
+            hasher.update(chunk)
+    return hasher.hexdigest()
 
 
 def select_cases(manifest):
@@ -49,33 +69,15 @@ def save_report(output, path, report):
     report['proved'] = sum(c['status'] == 'proved' for c in report['cases'])
     replace_text(output / 'results.json', json.dumps(report, indent=2) + '\n')
     lines = ['# Positive case proof log', '',
-             f"Started (UTC): {report['started']}. Status: **{report['status']}**.", '',
-             f"Commit: `{report['commit']}`. Lean: `{report['lean_version']}`.", '',
-             'Target: `Program_ok input expected`, with the exact recorded oracle and initial fresh supply 0.',
-             'This proves acceptance only; the corpus proposition also asks for uniqueness, which this runner does not prove.',
-             f"Probe mode: {'kernel reduction' if report.get('kernel_only') else 'native evaluation'}. "
-             'Only a kernel-checked `runEval_sound … rfl` theorem counts as proved.', '',
-             f"Order: source bytes, then path. Selected: {len(report['cases'])}/{report['total_positive']}. "
-             f"Proved: **{report['proved']}**.", '',
-             'Command:', '', '```sh', report['command'], '```', '',
-             f"Artifacts: `{output}` (generated Lean, phase output, commands, timings, hashes and `results.json`).", '',
-             '| ID | Bytes | Source | Result | Fuel | Seconds |',
-             '|---:|---:|---|---|---:|---:|']
+             '| Case | Seconds | Success |', '|---|---:|---|']
     for row in report['cases']:
-        source = Path(row['source'])
-        try:
-            source = source.relative_to(Path.cwd())
-        except ValueError:
-            pass
-        lines.append(f"| {row['case_id']} | {row['bytes']} | `{source}` | {row['status']} | "
-                     f"{row.get('fuel', '')} | {row.get('seconds', 0):.2f} |")
-    if report.get('error'):
-        lines += ['', 'Setup/run error (full output is in the artifact directory):', '',
-                  '```text', report['error'][:4000], '```']
-    for row in report['cases']:
-        if row.get('error') or row.get('axioms'):
-            lines += ['', f"Case {row['case_id']} ({row['status']}):", '', '```text',
-                      row.get('error', row.get('axioms', ''))[:2000], '```']
+        if row['status'] == 'pending':
+            continue
+        seconds = f"{row['seconds']:.2f}" if 'seconds' in row else '—'
+        lines.append(f"| case_{row['case_id']} | {seconds} | {success(row['status'])} |")
+    passed = report['status'] == 'complete' and report['proved'] == len(report['cases'])
+    result = '—' if report['status'] == 'running' else ('PASS' if passed else 'FAIL')
+    lines.append(f"| total | {report.get('seconds', 0):.2f} | {result} |")
     replace_text(path, '\n'.join(lines) + '\n')
 
 
@@ -88,8 +90,9 @@ def run_phase(command, output, label, timeout):
         try:
             stdout, stderr = process.communicate(timeout=timeout)
             code = process.returncode
-        except (subprocess.TimeoutExpired, KeyboardInterrupt) as error:
+        except (subprocess.TimeoutExpired, KeyboardInterrupt, CaseTimeout) as error:
             interrupted = isinstance(error, KeyboardInterrupt)
+            expired = isinstance(error, CaseTimeout)
             # The translator can spawn a preprocessor or gzip. Bound the whole
             # process group, including children that still hold the output pipes.
             try:
@@ -99,18 +102,42 @@ def run_phase(command, output, label, timeout):
             stdout, stderr = process.communicate()
             code = None
             stderr += '\nPhase interrupted.\n' if interrupted else '\nPhase timed out.\n'
+        else:
+            expired = False
     (output / f'{label}.stdout.txt').write_text(stdout)
     (output / f'{label}.stderr.txt').write_text(stderr)
     record = dict(command=command, returncode=code, seconds=time.monotonic() - start)
     (output / f'{label}.json').write_text(json.dumps(record, indent=2) + '\n')
     if interrupted:
         raise KeyboardInterrupt
+    if expired:
+        raise CaseTimeout('case time limit reached')
     return record, stdout, stderr
 
 
 def lean_phase(source, output, timeout):
     return run_phase(['lean', '-o', str(source.with_suffix('.olean')), str(source)],
                      output, source.stem, timeout)
+
+
+def reuse_semantics(cache, output, report):
+    cached = json.loads((cache / 'results.json').read_text())
+    if cached['lean_version'] != report['lean_version']:
+        raise ValueError('cached semantics Lean version differs')
+    if (cached.get('semantics_sha256') != report['semantics_sha256']
+            or digest(cache / 'Semantics.lean') != report['semantics_sha256']):
+        raise ValueError('cached semantics source differs from freshly generated semantics')
+    compiled_hash = digest(cache / 'Semantics.olean')
+    if cached.get('semantics_olean_sha256') != compiled_hash:
+        raise ValueError('cached compiled semantics hash is missing or differs')
+    shutil.copyfile(cache / 'Semantics.olean', output / 'Semantics.olean')
+    report['semantics_cache'] = str(cache)
+
+
+def proved_in(previous):
+    cached = json.loads((previous / 'results.json').read_text())
+    return {(c['case_id'], c['source_sha256'], c['oracle_sha256'])
+            for c in cached['cases'] if c['status'] == 'proved'}
 
 
 def require_success(phase, stdout, stderr):
@@ -182,9 +209,12 @@ open SpecTec SpecTecExecution
             return
         supply = int(match[2])
         proof = output / f'Case{index:04d}Proof.lean'
+        # Smart unfolding rebuilds runEval's continuation lambdas at every step, so
+        # elaborating `rfl` can exhaust memory where `#reduce` (which disables it) does not.
         proof.write_text(f'''import {module}
 set_option maxRecDepth 16384
 set_option maxHeartbeats {args.heartbeats}
+set_option smartUnfolding false
 namespace SpecTec
 open SpecTecExecution
 theorem {theorem} : Program_ok {name}_input {name}_expected :=
@@ -216,16 +246,25 @@ def main():
     parser.add_argument('--output', type=Path, required=True, help='new artifact directory')
     parser.add_argument('--report', type=Path, required=True, help='new Markdown log document')
     parser.add_argument('-I', dest='include', action='append', default=[])
-    parser.add_argument('--limit', type=int, default=10, help='smallest N positives; 0 means all')
+    parser.add_argument('--limit', type=int, default=0, help='smallest N positives; default 0 means all')
     parser.add_argument('--offset', type=int, default=0, help='skip N positives in sorted order')
     parser.add_argument('--fuel', type=int, nargs='+', default=[128, 512, 2048])
-    parser.add_argument('--timeout', type=float, default=120, help='seconds per case phase')
+    parser.add_argument('--timeout', type=float, help='optional tighter limit in seconds per case phase')
     parser.add_argument('--setup-timeout', type=float, default=900)
+    parser.add_argument('--case-timeout', type=float, default=1800,
+                        help='wall-clock seconds for each case, including all fuel attempts (default: 1800)')
+    parser.add_argument('--semantics-from', type=Path,
+                        help='reuse checked shared semantics from a previous run with matching source and Lean version')
+    parser.add_argument('--skip-proved-from', type=Path,
+                        help='omit cases a previous run proved for the same source and oracle hashes')
     parser.add_argument('--heartbeats', type=int, default=4000000)
     parser.add_argument('--kernel-only', action='store_true',
                         help='allow noncomputable semantics and probe with kernel reduction')
     args = parser.parse_args()
-    if args.limit < 0 or args.offset < 0 or min(args.fuel) < 1 or min(args.timeout, args.setup_timeout, args.heartbeats) <= 0:
+    if (args.limit < 0 or args.offset < 0 or min(args.fuel) < 1
+            or not all(math.isfinite(n) and n > 0 for n in
+                       (args.setup_timeout, args.case_timeout, args.heartbeats))
+            or (args.timeout is not None and (not math.isfinite(args.timeout) or args.timeout <= 0))):
         parser.error('limits must be positive (limit and offset may be zero)')
     output, report_path = args.output.resolve(), args.report.resolve()
     if output.exists() or report_path.exists():
@@ -233,14 +272,18 @@ def main():
     args.exe, args.spec = str(Path(args.exe).resolve()), str(Path(args.spec).resolve())
     args.includes = [item for directory in args.include for item in ('-I', str(Path(directory).resolve()))]
     args.fuel = sorted(set(args.fuel))
+    run_start = time.monotonic()
     output.mkdir(parents=True)
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report = dict(started=datetime.now(timezone.utc).isoformat(), status='running',
                   command=shlex.join([sys.executable, *sys.argv]), commit='unknown',
                   lean_version='unknown', total_positive=0, cases=[], proved=0,
-                  runner_sha256=digest(Path(__file__)), kernel_only=args.kernel_only)
+                  runner_sha256=digest(Path(__file__)), kernel_only=args.kernel_only,
+                  seconds=0.0, case_timeout=args.case_timeout)
     if os.environ.get('ELAN_TOOLCHAIN'):
         report['command'] = 'ELAN_TOOLCHAIN=' + shlex.quote(os.environ['ELAN_TOOLCHAIN']) + ' ' + report['command']
+    previous_handler = signal.signal(signal.SIGALRM, expire_case)
+    print('case\tseconds\tsuccess', flush=True)
     try:
         report['commit'] = subprocess.run(['git', 'rev-parse', 'HEAD'], capture_output=True, text=True).stdout.strip()
         report['lean_version'] = subprocess.run(['lean', '--version'], check=True, capture_output=True, text=True).stdout.strip()
@@ -248,38 +291,55 @@ def main():
         report['total_positive'] = len(rows)
         report['manifest_sha256'] = digest(args.manifest.resolve())
         report['executable_sha256'] = digest(Path(args.exe))
+        if args.skip_proved_from:
+            proved = proved_in(args.skip_proved_from.resolve())
+            rows = [row for row in rows if (row['case_id'], row['source_sha256'], row['oracle_sha256']) not in proved]
+            report['skipped_proved'] = dict(source=str(args.skip_proved_from.resolve()),
+                                            count=report['total_positive'] - len(rows))
         report['cases'] = rows[args.offset:args.offset + args.limit if args.limit else None]
         if not report['cases']:
             raise ValueError('no positive cases selected')
         save_report(output, report_path, report)
-        print(f"Selected {len(report['cases'])}/{len(rows)} positive cases; compiling shared semantics", flush=True)
         phase, semantics, error = run_phase([args.exe, '--executable', args.spec],
                                             output, 'translation', args.setup_timeout)
         require_success(phase, semantics, error)
         source = output / 'Semantics.lean'
         source.write_text(('noncomputable section\n' if args.kernel_only else '') + semantics)
         report['semantics_sha256'] = digest(source)
-        require_success(*lean_phase(source, output, args.setup_timeout))
+        if args.semantics_from:
+            reuse_semantics(args.semantics_from.resolve(), output, report)
+        else:
+            require_success(*lean_phase(source, output, args.setup_timeout))
+        report['semantics_olean_sha256'] = digest(source.with_suffix('.olean'))
         for row in report['cases']:
             start = time.monotonic()
             row['status'] = 'running'
             save_report(output, report_path, report)
-            print(f"case {row['case_id']}: {row['bytes']} bytes, {row['source']}", flush=True)
+            signal.setitimer(signal.ITIMER_REAL,
+                             max(0.000001, args.case_timeout - (time.monotonic() - start)))
             try:
                 prove_case(row, args, output)
             except TimeoutError as error:
                 row.update(status='timeout', error=str(error))
             except (OSError, ValueError) as error:
                 row.update(status='case-error', error=str(error))
-            row['seconds'] = time.monotonic() - start
+            finally:
+                signal.setitimer(signal.ITIMER_REAL, 0)
+                row['seconds'] = time.monotonic() - start
+            report['seconds'] = time.monotonic() - run_start
             save_report(output, report_path, report)
-            print(f"  {row['status']} ({row['seconds']:.2f}s)", flush=True)
+            print(f"case_{row['case_id']}\t{row['seconds']:.2f}\t{success(row['status'])}", flush=True)
         report['status'] = 'complete'
-    except (OSError, ValueError, subprocess.SubprocessError, KeyboardInterrupt) as error:
+    except (OSError, ValueError, KeyError, subprocess.SubprocessError, KeyboardInterrupt) as error:
         report.update(status='failed', error=str(error) or 'interrupted')
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous_handler)
+    report['seconds'] = time.monotonic() - run_start
     save_report(output, report_path, report)
-    print(f"Proved {report['proved']}/{len(report['cases'])}; log: {report_path}", flush=True)
-    return int(report['status'] != 'complete' or report['proved'] != len(report['cases']))
+    failed = report['status'] != 'complete' or report['proved'] != len(report['cases'])
+    print(f"total\t{report['seconds']:.2f}\t{'FAIL' if failed else 'PASS'}", flush=True)
+    return int(failed)
 
 
 if __name__ == '__main__':
